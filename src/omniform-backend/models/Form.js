@@ -1,10 +1,11 @@
 const mongoose = require("mongoose");
 
-const FormFieldSchema = new mongoose.Schema(
+const FormComponentSchema = new mongoose.Schema(
   {
-    key: { type: String, required: true, trim: true },
-    label: { type: String, required: true, trim: true },
+    id: { type: String, required: true, trim: true },
     type: { type: String, required: true, trim: true },
+    label: { type: String, required: true, trim: true },
+    tag: { type: String, trim: true },
     required: { type: Boolean, default: false },
     options: [{ type: String }],
   },
@@ -25,7 +26,8 @@ const FormSchema = new mongoose.Schema(
       enum: ["active", "inactive"],
       default: "active",
     },
-    fields: [FormFieldSchema],
+    components: [FormComponentSchema],
+    fields: [FormComponentSchema],
   },
   { timestamps: true }
 );

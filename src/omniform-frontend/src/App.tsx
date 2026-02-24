@@ -13,12 +13,29 @@ import { ComboBox } from "./components/ui/combobox";
 import { Select } from "./components/ui/select";
 import { SectionHeading } from "./components/ui/section-heading";
 import { StatusPill } from "./components/ui/status-pill";
+import {
+  BadgeCheck,
+  Calendar,
+  FileText,
+  IdCard,
+  Image,
+  Mail,
+  MapPin,
+  Phone,
+  Plus,
+  Shield,
+  Type,
+  User,
+  X,
+} from "lucide-react";
 
 type Organization = { _id: string; name: string; slug: string; status: string };
 type FormField = {
-  key: string;
+  id: string;
   label: string;
   type: string;
+  tag?: string;
+  iconName?: string;
   required?: boolean;
   options?: string[];
 };
@@ -26,7 +43,8 @@ type Form = {
   _id: string;
   name: string;
   description?: string;
-  fields: FormField[];
+  components?: FormField[];
+  fields?: FormField[];
 };
 type Submission = {
   _id: string;
@@ -40,11 +58,18 @@ type Submission = {
   cooldownUntil?: string;
 };
 type Profile = {
-  primary?: Record<string, string>;
-  extra?: Record<string, string>;
+  fullName?: string;
+  workEmail?: string;
+  personalEmail?: string;
+  address?: string;
+  phone?: string;
+  citizenshipNumber?: string;
+  profilePhotoUrl?: string;
+  citizenshipPhotoUrl?: string;
 };
 
 type View = "user" | "profile" | "admin" | "org";
+type AdminView = "dashboard" | "builder" | "manage-orgs" | "manage-forms";
 
 export default function App() {
   const { user, isLoaded } = useUser();
@@ -64,19 +89,42 @@ export default function App() {
   const [orgMessage, setOrgMessage] = useState("");
   const [roleMessage, setRoleMessage] = useState("");
   const [formOrgId, setFormOrgId] = useState("");
+  const [formId, setFormId] = useState<string | null>(null);
   const [formName, setFormName] = useState("");
   const [formDescription, setFormDescription] = useState("");
-  const [formFields, setFormFields] = useState<
+  const [formComponents, setFormComponents] = useState<
     Array<{
-      key: string;
-      label: string;
+      id: string;
       type: string;
+      label: string;
+      tag: string;
       required: boolean;
       options: string;
     }>
-  >([{ key: "", label: "", type: "text", required: false, options: "" }]);
+  >([]);
+  const [draggingComponentId, setDraggingComponentId] = useState<string | null>(
+    null
+  );
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
+  const [showCustomComponent, setShowCustomComponent] = useState(false);
+  const [customComponent, setCustomComponent] = useState({
+    label: "",
+    type: "text",
+    tag: "",
+    iconName: "type",
+    required: false,
+    options: "",
+  });
   const [formMessage, setFormMessage] = useState("");
+  const [showFormSave, setShowFormSave] = useState(false);
   const [adminOrgs, setAdminOrgs] = useState<Organization[]>([]);
+  const [manageOrgQuery, setManageOrgQuery] = useState("");
+  const [manageFormQuery, setManageFormQuery] = useState("");
+  const [manageForms, setManageForms] = useState<Form[]>([]);
+  const [manageFormsLoading, setManageFormsLoading] = useState(false);
+  const [selectedManageOrg, setSelectedManageOrg] = useState<Organization | null>(
+    null
+  );
   const [orgSubmissions, setOrgSubmissions] = useState<Submission[]>([]);
   const [orgForms, setOrgForms] = useState<Form[]>([]);
   const [orgStatusFilter, setOrgStatusFilter] = useState("pending");
@@ -97,18 +145,48 @@ export default function App() {
   const [submitMessage, setSubmitMessage] = useState("");
   const [orgLoading, setOrgLoading] = useState(false);
   const [formLoading, setFormLoading] = useState(false);
-  const [profileDraft, setProfileDraft] = useState<Profile>({
-    primary: { fullName: "", email: "", phone: "", address: "", dob: "" },
-    extra: {},
-  });
-  const [extraEntries, setExtraEntries] = useState<
+  const [formValues, setFormValues] = useState<Record<string, string>>({});
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [componentSearch, setComponentSearch] = useState("");
+  const [showSavePrompt, setShowSavePrompt] = useState(false);
+  const [saveCandidates, setSaveCandidates] = useState<
     Array<{ key: string; value: string }>
-  >([{ key: "", value: "" }]);
+  >([]);
+  const [profileDraft, setProfileDraft] = useState<Profile>({
+    fullName: "",
+    workEmail: "",
+    personalEmail: "",
+    address: "",
+    phone: "",
+    citizenshipNumber: "",
+    profilePhotoUrl: "",
+    citizenshipPhotoUrl: "",
+  });
   const [profileMessage, setProfileMessage] = useState("");
   const [view, setView] = useState<View>("user");
+  const [adminView, setAdminView] = useState<AdminView>("dashboard");
   const [resolvedRole, setResolvedRole] = useState<string | null>(null);
   const [resolvedOrganizationId, setResolvedOrganizationId] = useState<string>("");
   const [hasReloaded, setHasReloaded] = useState(false);
+  const [onboardingStep, setOnboardingStep] = useState(1);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [roleResolved, setRoleResolved] = useState(false);
+  const filteredAdminOrgs = useMemo(() => {
+    const query = manageOrgQuery.trim().toLowerCase();
+    if (!query) return adminOrgs;
+    return adminOrgs.filter((org) =>
+      org.name.toLowerCase().includes(query)
+    );
+  }, [adminOrgs, manageOrgQuery]);
+  const filteredManageForms = useMemo(() => {
+    const query = manageFormQuery.trim().toLowerCase();
+    if (!query) return manageForms;
+    return manageForms.filter((form) => {
+      const name = form.name?.toLowerCase() || "";
+      const description = form.description?.toLowerCase() || "";
+      return name.includes(query) || description.includes(query);
+    });
+  }, [manageForms, manageFormQuery]);
 
   const adminFetch = async (path: string, options: RequestInit) => {
     const token = await getToken();
@@ -217,33 +295,47 @@ export default function App() {
         setFormMessage("Form name is required.");
         return;
       }
-      const fields = formFields
-        .filter((field) => field.key.trim() && field.label.trim())
-        .map((field) => ({
-          key: field.key.trim(),
-          label: field.label.trim(),
-          type: field.type.trim() || "text",
-          required: field.required,
-          options: field.options
-            ? field.options.split(",").map((option) => option.trim())
+      const components = formComponents
+        .filter((component) => component.label.trim())
+        .map((component) => ({
+          id: component.id,
+          type: component.type.trim() || "text",
+          label: component.label.trim(),
+          tag: component.tag.trim() || undefined,
+          required: component.required,
+          options: component.options
+            ? component.options.split(",").map((option) => option.trim())
             : [],
         }));
 
-      await adminFetch(`/api/admin/orgs/${formOrgId}/forms`, {
-        method: "POST",
-        body: JSON.stringify({
-          name: formName,
-          description: formDescription,
-          fields,
-        }),
-      });
+      if (formId) {
+        await adminFetch(`/api/admin/orgs/${formOrgId}/forms/${formId}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            name: formName,
+            description: formDescription,
+            components,
+          }),
+        });
+        setFormMessage("Form updated.");
+      } else {
+        await adminFetch(`/api/admin/orgs/${formOrgId}/forms`, {
+          method: "POST",
+          body: JSON.stringify({
+            name: formName,
+            description: formDescription,
+            components,
+          }),
+        });
+        setFormMessage("Form created.");
+      }
 
-      setFormMessage("Form created.");
+      setFormId(null);
       setFormName("");
       setFormDescription("");
-      setFormFields([
-        { key: "", label: "", type: "text", required: false, options: "" },
-      ]);
+      setFormComponents([]);
+      setShowFormSave(false);
+      setAdminView("dashboard");
     } catch (error) {
       setFormMessage(
         error instanceof Error ? error.message : "Failed to create form."
@@ -323,22 +415,133 @@ export default function App() {
     }
   };
 
+  const handleOpenManageOrg = async (org: Organization) => {
+    setSelectedManageOrg(org);
+    setManageFormQuery("");
+    setAdminView("manage-forms");
+    try {
+      setManageFormsLoading(true);
+      const payload = await adminFetch(`/api/orgs/${org._id}/forms?query=`, {
+        method: "GET",
+      });
+      setManageForms(payload.data || []);
+    } catch (error) {
+      setManageForms([]);
+    } finally {
+      setManageFormsLoading(false);
+    }
+  };
+
+  const handleEditManageForm = async (form: Form) => {
+    if (!selectedManageOrg) return;
+    try {
+      const payload = await adminFetch(
+        `/api/admin/orgs/${selectedManageOrg._id}/forms/${form._id}`,
+        { method: "GET" }
+      );
+      const fetchedForm = payload.data as Form;
+      setFormId(fetchedForm._id);
+      setFormOrgId(String(selectedManageOrg._id));
+      setFormName(fetchedForm.name || "");
+      setFormDescription(fetchedForm.description || "");
+      const components = (fetchedForm.components || fetchedForm.fields || []).map(
+        (component) => ({
+          id: component.id,
+          type: component.type,
+          label: component.label || "",
+          tag: component.tag || "",
+          required: component.required ?? false,
+          options: Array.isArray(component.options)
+            ? component.options.join(", ")
+            : "",
+        })
+      );
+      setFormComponents(components);
+      setAdminView("builder");
+      setShowFormSave(true);
+    } catch (error) {
+      setFormMessage(
+        error instanceof Error ? error.message : "Failed to load form."
+      );
+    }
+  };
+
+  useEffect(() => {
+    if (!isLoaded || !user || role !== "admin" || !selectedManageOrg) return;
+    const timer = setTimeout(async () => {
+      try {
+        setManageFormsLoading(true);
+        const payload = await adminFetch(
+          `/api/orgs/${selectedManageOrg._id}/forms?query=${encodeURIComponent(
+            manageFormQuery
+          )}`,
+          { method: "GET" }
+        );
+        setManageForms(payload.data || []);
+      } catch (error) {
+        setManageForms([]);
+      } finally {
+        setManageFormsLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [isLoaded, user, role, selectedManageOrg, manageFormQuery]);
+
   const buildAutofillPayload = (form: Form) => {
     const data: Record<string, string> = {};
-    form.fields?.forEach((field) => {
-      const primaryValue = profileDraft?.primary?.[field.key];
-      const extraValue = extraEntries.find((entry) => entry.key === field.key)
-        ?.value;
-      data[field.key] = primaryValue || extraValue || "";
+    const components = form.components || form.fields || [];
+    components.forEach((field) => {
+      const key = field.tag || field.id;
+      const value = (profileDraft as Record<string, string | undefined>)[key];
+      data[key] = value || "";
     });
     return data;
+  };
+
+  const openForm = (form: Form) => {
+    setActiveForm(form);
+    const components = form.components || form.fields || [];
+    const initialValues = components.reduce<Record<string, string>>(
+      (acc, field) => {
+        const key = field.tag || field.id;
+        acc[key] = "";
+        return acc;
+      },
+      {}
+    );
+    setFormValues(initialValues);
+    setFormErrors({});
+    setSubmitMessage("");
+  };
+
+  const handleAutofill = () => {
+    if (!activeForm) return;
+    const autofilled = buildAutofillPayload(activeForm);
+    setFormValues((prev) => ({ ...prev, ...autofilled }));
+    setFormErrors({});
   };
 
   const handleSubmitForm = async () => {
     if (!selectedOrg || !activeForm) return;
     try {
       setSubmitMessage("");
-      const data = buildAutofillPayload(activeForm);
+      const components = activeForm.components || activeForm.fields || [];
+      const missingRequired = components
+        .filter((field) => field.required)
+        .reduce<Record<string, string>>((acc, field) => {
+          const key = field.tag || field.id;
+          if (!formValues[key]) {
+            acc[key] = `${field.label} is required`;
+          }
+          return acc;
+        }, {});
+
+      if (Object.keys(missingRequired).length) {
+        setFormErrors(missingRequired);
+        setSubmitMessage("Please complete required fields.");
+        return;
+      }
+      const data = formValues;
       await authedFetch("/api/submissions", {
         method: "POST",
         body: JSON.stringify({
@@ -348,7 +551,25 @@ export default function App() {
         }),
       });
       setSubmitMessage("Submitted successfully.");
-      setActiveForm(null);
+      const profileKeys: Array<keyof Profile> = [
+        "fullName",
+        "workEmail",
+        "personalEmail",
+        "address",
+        "phone",
+        "citizenshipNumber",
+        "profilePhotoUrl",
+        "citizenshipPhotoUrl",
+      ];
+      const candidates = profileKeys
+        .filter((key) => !profileDraft[key] && data[key as string])
+        .map((key) => ({ key, value: data[key as string] }));
+      if (candidates.length) {
+        setSaveCandidates(candidates);
+        setShowSavePrompt(true);
+      } else {
+        setActiveForm(null);
+      }
       const payload = await authedFetch("/api/submissions/me");
       setSubmissions(payload.data || []);
     } catch (error) {
@@ -364,13 +585,7 @@ export default function App() {
       const payload = await authedFetch("/api/profile/me", {
         method: "PUT",
         body: JSON.stringify({
-          primary: profileDraft.primary || {},
-          extra: extraEntries.reduce<Record<string, string>>((acc, entry) => {
-            if (entry.key.trim()) {
-              acc[entry.key.trim()] = entry.value;
-            }
-            return acc;
-          }, {}),
+          ...profileDraft,
         }),
       });
       setProfile(payload.data || null);
@@ -382,17 +597,53 @@ export default function App() {
     }
   };
 
+  const handleOnboardingNext = async () => {
+    const missing =
+      !profileDraft.fullName ||
+      !profileDraft.workEmail ||
+      !profileDraft.personalEmail ||
+      !profileDraft.address;
+
+    if (missing) {
+      setProfileMessage("Please complete all required fields.");
+      return;
+    }
+
+    await handleProfileSave();
+    setOnboardingStep(2);
+  };
+
+  const handleOnboardingFinish = async () => {
+    await handleProfileSave();
+    setShowOnboarding(false);
+    setView("user");
+  };
+
+  const handleSaveMissing = async () => {
+    const updates = saveCandidates.reduce<Profile>((acc, item) => {
+      acc[item.key as keyof Profile] = item.value;
+      return acc;
+    }, {} as Profile);
+    setProfileDraft((prev) => ({ ...prev, ...updates }));
+    await handleProfileSave();
+    setShowSavePrompt(false);
+    setActiveForm(null);
+    setSaveCandidates([]);
+  };
+
   useEffect(() => {
     if (!isLoaded) return;
     if (!user) {
       setResolvedRole(null);
       setResolvedOrganizationId("");
       setView("user");
+      setRoleResolved(true);
       return;
     }
     const activeRole = resolvedRole || role;
     if (activeRole === "admin") {
       setView("admin");
+      setAdminView("dashboard");
     } else if (activeRole === "organization") {
       setView("org");
     } else {
@@ -413,8 +664,13 @@ export default function App() {
     refresh();
   }, [isLoaded, user, hasReloaded]);
 
+  const showLanding = isLoaded && !user;
+  const appReady = isLoaded && (!user || roleResolved);
+
   useEffect(() => {
     if (!isLoaded || !user) return;
+    let isActive = true;
+    setRoleResolved(false);
     const resolveRole = async () => {
       try {
         const payload = await authedFetch("/api/admin/whoami");
@@ -423,10 +679,17 @@ export default function App() {
       } catch (error) {
         setResolvedRole(null);
         setResolvedOrganizationId("");
+      } finally {
+        if (isActive) {
+          setRoleResolved(true);
+        }
       }
     };
 
     resolveRole();
+    return () => {
+      isActive = false;
+    };
   }, [isLoaded, user]);
 
   useEffect(() => {
@@ -450,23 +713,21 @@ export default function App() {
         const profilePayload = await authedFetch("/api/profile/me");
         setProfile(profilePayload.data || null);
         setProfileDraft({
-          primary: {
-            fullName: profilePayload?.data?.primary?.fullName || "",
-            email: profilePayload?.data?.primary?.email || "",
-            phone: profilePayload?.data?.primary?.phone || "",
-            address: profilePayload?.data?.primary?.address || "",
-            dob: profilePayload?.data?.primary?.dob || "",
-          },
-          extra: profilePayload?.data?.extra || {},
+          fullName: profilePayload?.data?.fullName || "",
+          workEmail: profilePayload?.data?.workEmail || "",
+          personalEmail: profilePayload?.data?.personalEmail || "",
+          address: profilePayload?.data?.address || "",
+          phone: profilePayload?.data?.phone || "",
+          citizenshipNumber: profilePayload?.data?.citizenshipNumber || "",
+          profilePhotoUrl: profilePayload?.data?.profilePhotoUrl || "",
+          citizenshipPhotoUrl: profilePayload?.data?.citizenshipPhotoUrl || "",
         });
-        const extras = profilePayload?.data?.extra || {};
-        const entries = Object.keys(extras).length
-          ? Object.entries(extras).map(([key, value]) => ({
-              key,
-              value: String(value ?? ""),
-            }))
-          : [{ key: "", value: "" }];
-        setExtraEntries(entries);
+        const hasBasics =
+          profilePayload?.data?.fullName &&
+          profilePayload?.data?.workEmail &&
+          profilePayload?.data?.personalEmail &&
+          profilePayload?.data?.address;
+        setShowOnboarding(!hasBasics);
       } catch (error) {
         setProfile(null);
       }
@@ -481,6 +742,18 @@ export default function App() {
 
     load();
   }, [isLoaded, user, role]);
+
+  useEffect(() => {
+    if (!isLoaded || !user || role !== "user") return;
+    if (!orgQuery.trim()) {
+      setOrgResults([]);
+      return;
+    }
+    const timer = setTimeout(() => {
+      handleOrgSearch();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [isLoaded, user, role, orgQuery]);
 
   useEffect(() => {
     if (!isLoaded || !user || role !== "organization") return;
@@ -515,189 +788,387 @@ export default function App() {
 
   return (
     <div className="min-h-screen">
-      <header className="px-6 py-6 sm:px-10">
-        <nav className="mx-auto flex max-w-6xl items-center justify-between">
-          <div className="space-y-1">
-            <p className="text-sm uppercase tracking-[0.2em] text-sand-500">
-              Omniform
-            </p>
-            <h1 className="text-2xl font-semibold text-sand-950 sm:text-3xl">
-              Identity Forms, One Tap
-            </h1>
-          </div>
+      {!showLanding ? (
+        <header className="px-6 py-6 sm:px-10">
+          <nav className="mx-auto flex max-w-6xl items-center justify-between">
+            <div className="space-y-1">
+              <p className="text-sm uppercase tracking-[0.2em] text-sand-500">
+                Omniform
+              </p>
+              <h1 className="text-2xl font-semibold text-sand-950 sm:text-3xl">
+                Identity Forms, One Tap
+              </h1>
+            </div>
             <div className="flex flex-wrap items-center gap-3">
-              <Badge tone="neutral">{String(resolvedRole || role)}</Badge>
-              {role === "user" ? (
+              {showOnboarding ? null : (
                 <>
-                  <Button
-                    variant={view === "user" ? "secondary" : "ghost"}
-                    size="sm"
-                    onClick={() => setView("user")}
-                  >
-                    Dashboard
-                  </Button>
-                  <Button
-                    variant={view === "profile" ? "secondary" : "ghost"}
-                    size="sm"
-                    onClick={() => setView("profile")}
-                  >
-                    Profile
-                  </Button>
+                  {user ? (
+                    <Badge tone="neutral">{String(resolvedRole || role)}</Badge>
+                  ) : null}
+                  {user && role === "user" ? (
+                    <>
+                      <Button
+                        variant={view === "user" ? "secondary" : "ghost"}
+                        size="sm"
+                        onClick={() => setView("user")}
+                      >
+                        Dashboard
+                      </Button>
+                      <Button
+                        variant={view === "profile" ? "secondary" : "ghost"}
+                        size="sm"
+                        onClick={() => setView("profile")}
+                      >
+                        Profile
+                      </Button>
+                    </>
+                  ) : null}
+                  {user && role === "admin" ? (
+                    <Button
+                      variant={view === "admin" ? "secondary" : "ghost"}
+                      size="sm"
+                      onClick={() => {
+                        setView("admin");
+                        setAdminView("dashboard");
+                      }}
+                    >
+                      Admin
+                    </Button>
+                  ) : null}
+                  {user && role === "organization" ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setView("org")}
+                    >
+                      Review
+                    </Button>
+                  ) : null}
                 </>
-              ) : null}
-            {role === "admin" ? (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setView("admin")}
-              >
-                Admin
-              </Button>
-            ) : null}
-            {role === "organization" ? (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setView("org")}
-              >
-                Review
-              </Button>
-            ) : null}
-            {isLoaded && user ? (
-              <SignOutButton>
-                <Button variant="secondary" size="sm">
-                  Sign out
-                </Button>
-              </SignOutButton>
-            ) : (
-              <SignInButton>
-                <Button variant="secondary" size="sm">
-                  Sign in
-                </Button>
-              </SignInButton>
-            )}
-          </div>
-        </nav>
-      </header>
+              )}
+              {isLoaded && user ? (
+                <SignOutButton>
+                  <Button variant="secondary" size="sm">
+                    Sign out
+                  </Button>
+                </SignOutButton>
+              ) : (
+                <SignInButton>
+                  <Button variant="secondary" size="sm">
+                    Sign in
+                  </Button>
+                </SignInButton>
+              )}
+            </div>
+          </nav>
+        </header>
+      ) : null}
 
       <main className="px-6 pb-16 sm:px-10">
-        {role === "user" && view === "user" ? (
-        <section className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-          <Card className="space-y-6">
-            <SectionHeading
-              title="Find your organization"
-              subtitle="Search by organization name, then select a form to autofill."
-            />
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <Input
-                placeholder="Search organizations"
-                value={orgQuery}
-                onChange={(event) => setOrgQuery(event.target.value)}
-              />
-              <Button onClick={handleOrgSearch} disabled={orgLoading}>
-                {orgLoading ? "Searching..." : "Search"}
-              </Button>
-            </div>
-            <div className="space-y-4">
-              {orgResults.map((org) => (
-                <div
-                  key={org._id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sand-200 bg-white p-4"
-                >
-                  <div>
-                    <p className="text-lg font-semibold text-sand-950">
-                      {org.name}
-                    </p>
-                    <p className="text-sm text-sand-500">Active organization</p>
-                  </div>
-                  <Button
-                    variant="secondary"
-                    onClick={() => handleSelectOrg(org)}
-                    disabled={formLoading}
-                  >
-                    View forms
-                  </Button>
-                </div>
-              ))}
-              {orgLoading ? (
-                <p className="text-sm text-sand-500">Searching...</p>
-              ) : null}
-              {!orgLoading && !orgResults.length ? (
-                <p className="text-sm text-sand-500">
-                  Search to see organizations.
+        {showLanding ? <LandingPage /> : null}
+        {!showLanding && user && !roleResolved ? (
+          <section className="mx-auto mt-10 max-w-3xl">
+            <Card className="space-y-2">
+              <p className="text-sm uppercase tracking-[0.2em] text-sand-500">
+                Loading workspace
+              </p>
+              <h2 className="text-2xl font-semibold text-sand-950">
+                Resolving your access
+              </h2>
+              <p className="text-sm text-sand-500">
+                Just a moment while we personalize your dashboard.
+              </p>
+            </Card>
+          </section>
+        ) : null}
+        {!showLanding && appReady ? (
+          <>
+        {role === "user" && showOnboarding ? (
+          <section className="mx-auto mt-10 max-w-2xl">
+            <Card className="space-y-6">
+              <div className="space-y-3">
+                <p className="text-xs uppercase tracking-[0.3em] text-sand-500">
+                  Welcome to Omniform
                 </p>
-              ) : null}
-            </div>
-          </Card>
-
-          <Card className="space-y-5">
-            <SectionHeading
-              title={
-                selectedOrg
-                  ? `Forms for ${selectedOrg.name}`
-                  : "Select an organization"
-              }
-              subtitle="Pick a form, autofill, and confirm before submitting."
-            />
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <Input
-                placeholder="Search forms"
-                value={formQuery}
-                onChange={(event) => setFormQuery(event.target.value)}
-              />
-              <Button
-                variant="secondary"
-                onClick={handleFormSearch}
-                disabled={formLoading}
-              >
-                {formLoading ? "Searching..." : "Search"}
-              </Button>
-            </div>
-            <div className="space-y-3">
-              {forms.map((form) => (
+                <h2 className="text-3xl font-semibold text-sand-950">
+                  Let’s set up your profile
+                </h2>
+                <p className="text-sm text-sand-500">
+                  Complete the essentials to unlock form filling.
+                </p>
+              </div>
+              <div className="h-1 w-full overflow-hidden rounded-full bg-sand-200">
                 <div
-                  key={form._id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sand-200 bg-white p-4"
-                >
-                  <div>
-                    <p className="font-semibold text-sand-950">{form.name}</p>
-                    <p className="text-sm text-sand-500">Autofill ready</p>
-                  </div>
-                  <Button size="sm" onClick={() => setActiveForm(form)}>
-                    Autofill
-                  </Button>
+                  className="h-full rounded-full bg-sand-900 transition-all"
+                  style={{ width: onboardingStep === 1 ? "50%" : "100%" }}
+                />
+              </div>
+
+              {onboardingStep === 1 ? (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Input
+                    placeholder="Full name *"
+                    value={profileDraft.fullName || ""}
+                    onChange={(event) =>
+                      setProfileDraft((prev) => ({
+                        ...prev,
+                        fullName: event.target.value,
+                      }))
+                    }
+                  />
+                  <Input
+                    placeholder="Work email *"
+                    value={profileDraft.workEmail || ""}
+                    onChange={(event) =>
+                      setProfileDraft((prev) => ({
+                        ...prev,
+                        workEmail: event.target.value,
+                      }))
+                    }
+                  />
+                  <Input
+                    placeholder="Personal email *"
+                    value={profileDraft.personalEmail || ""}
+                    onChange={(event) =>
+                      setProfileDraft((prev) => ({
+                        ...prev,
+                        personalEmail: event.target.value,
+                      }))
+                    }
+                  />
+                  <Input
+                    placeholder="Address *"
+                    value={profileDraft.address || ""}
+                    onChange={(event) =>
+                      setProfileDraft((prev) => ({
+                        ...prev,
+                        address: event.target.value,
+                      }))
+                    }
+                  />
                 </div>
-              ))}
-              {formLoading ? (
-                <p className="text-sm text-sand-500">Loading forms...</p>
+              ) : (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Input
+                    placeholder="Phone number"
+                    value={profileDraft.phone || ""}
+                    onChange={(event) =>
+                      setProfileDraft((prev) => ({
+                        ...prev,
+                        phone: event.target.value,
+                      }))
+                    }
+                  />
+                  <Input
+                    placeholder="Citizenship number"
+                    value={profileDraft.citizenshipNumber || ""}
+                    onChange={(event) =>
+                      setProfileDraft((prev) => ({
+                        ...prev,
+                        citizenshipNumber: event.target.value,
+                      }))
+                    }
+                  />
+                  <Input
+                    placeholder="Profile photo (placeholder)"
+                    value={profileDraft.profilePhotoUrl || ""}
+                    onChange={(event) =>
+                      setProfileDraft((prev) => ({
+                        ...prev,
+                        profilePhotoUrl: event.target.value,
+                      }))
+                    }
+                  />
+                  <Input
+                    placeholder="Citizenship photo (placeholder)"
+                    value={profileDraft.citizenshipPhotoUrl || ""}
+                    onChange={(event) =>
+                      setProfileDraft((prev) => ({
+                        ...prev,
+                        citizenshipPhotoUrl: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+              )}
+
+              <div className="flex flex-wrap gap-3">
+                {onboardingStep === 1 ? (
+                  <Button onClick={handleOnboardingNext}>Next</Button>
+                ) : (
+                  <>
+                    <Button onClick={handleOnboardingFinish}>Save and finish</Button>
+                    <Button variant="ghost" onClick={() => setShowOnboarding(false)}>
+                      Skip for now
+                    </Button>
+                  </>
+                )}
+              </div>
+              {profileMessage ? (
+                <p className="text-sm text-sand-500">{profileMessage}</p>
               ) : null}
-              {!formLoading && !forms.length && selectedOrg ? (
-                <p className="text-sm text-sand-500">No forms yet.</p>
-              ) : null}
-            </div>
-          </Card>
-        </section>
+            </Card>
+          </section>
         ) : null}
 
-        {role === "user" && view === "user" && activeForm ? (
+        {role === "user" && showOnboarding ? null : (
+          role === "user" && view === "user" ? (
+            <section className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+              <Card className="space-y-6">
+                <SectionHeading
+                  title="Find your organization"
+                  subtitle="Search by organization name, then select a form to autofill."
+                />
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <Input
+                    placeholder="Search organizations"
+                    value={orgQuery}
+                    onChange={(event) => setOrgQuery(event.target.value)}
+                  />
+                </div>
+                <div className="space-y-4">
+                  {orgResults.map((org) => (
+                    <div
+                      key={org._id}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sand-200 bg-white p-4"
+                    >
+                      <div>
+                        <p className="text-lg font-semibold text-sand-950">
+                          {org.name}
+                        </p>
+                        <p className="text-sm text-sand-500">Active organization</p>
+                      </div>
+                      <Button
+                        variant="secondary"
+                        onClick={() => handleSelectOrg(org)}
+                        disabled={formLoading}
+                      >
+                        View forms
+                      </Button>
+                    </div>
+                  ))}
+                  {orgLoading ? (
+                    <p className="text-sm text-sand-500">Searching...</p>
+                  ) : null}
+                  {!orgLoading && !orgResults.length ? (
+                    <p className="text-sm text-sand-500">
+                      Search to see organizations.
+                    </p>
+                  ) : null}
+                </div>
+              </Card>
+
+              <Card className="space-y-5">
+                <SectionHeading
+                  title={
+                    selectedOrg
+                      ? `Forms for ${selectedOrg.name}`
+                      : "Select an organization"
+                  }
+                  subtitle="Pick a form, autofill, and confirm before submitting."
+                />
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <Input
+                    placeholder="Search forms"
+                    value={formQuery}
+                    onChange={(event) => setFormQuery(event.target.value)}
+                  />
+                  <Button
+                    variant="secondary"
+                    onClick={handleFormSearch}
+                    disabled={formLoading}
+                  >
+                    {formLoading ? "Searching..." : "Search"}
+                  </Button>
+                </div>
+                <div className="space-y-3">
+                  {forms.map((form) => (
+                    <div
+                      key={form._id}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sand-200 bg-white p-4"
+                    >
+                      <div>
+                        <p className="font-semibold text-sand-950">{form.name}</p>
+                        <p className="text-sm text-sand-500">Autofill ready</p>
+                      </div>
+                      <Button size="sm" onClick={() => openForm(form)}>
+                        Fill
+                      </Button>
+                    </div>
+                  ))}
+                  {formLoading ? (
+                    <p className="text-sm text-sand-500">Loading forms...</p>
+                  ) : null}
+                  {!formLoading && !forms.length && selectedOrg ? (
+                    <p className="text-sm text-sand-500">No forms yet.</p>
+                  ) : null}
+                </div>
+              </Card>
+            </section>
+          ) : null
+        )}
+
+        {role === "user" && view === "user" && activeForm && !showOnboarding ? (
           <section className="mx-auto mt-10 max-w-6xl">
             <Card className="space-y-5">
               <SectionHeading
                 title={`Confirm ${activeForm.name}`}
-                subtitle="Review the autofilled fields before submitting."
+                subtitle="Fill the form manually or use autofill, then submit."
               />
+              <div className="flex flex-wrap gap-3">
+                <Button variant="secondary" onClick={handleAutofill}>
+                  Autofill
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() =>
+                    setFormValues((prev) =>
+                      Object.keys(prev).reduce<Record<string, string>>(
+                        (acc, key) => {
+                          acc[key] = "";
+                          return acc;
+                        },
+                        {}
+                      )
+                    )
+                  }
+                >
+                  Clear
+                </Button>
+              </div>
               <div className="grid gap-3 sm:grid-cols-2">
-                {(activeForm.fields || []).map((field) => (
+                {(activeForm.components || activeForm.fields || []).map((field) => (
                   <div
-                    key={field.key}
+                    key={field.id}
                     className="rounded-2xl border border-sand-200 bg-white p-4"
                   >
                     <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
                       {field.label}
+                      {field.required ? " *" : ""}
                     </p>
-                    <p className="mt-2 text-base text-sand-950">
-                      {buildAutofillPayload(activeForm)[field.key] || "—"}
-                    </p>
+                    <Input
+                      placeholder={`Enter ${field.label.toLowerCase()}`}
+                      value={formValues[field.tag || field.id] || ""}
+                      onChange={(event) =>
+                        setFormValues((prev) => {
+                          const key = field.tag || field.id;
+                          const next = { ...prev, [key]: event.target.value };
+                          if (formErrors[key]) {
+                            setFormErrors((errors) => {
+                              const updated = { ...errors };
+                              delete updated[key];
+                              return updated;
+                            });
+                          }
+                          return next;
+                        })
+                      }
+                    />
+                    {formErrors[field.tag || field.id] ? (
+                      <p className="mt-2 text-xs text-rose-700">
+                        {formErrors[field.tag || field.id]}
+                      </p>
+                    ) : null}
                   </div>
                 ))}
               </div>
@@ -714,7 +1185,46 @@ export default function App() {
           </section>
         ) : null}
 
-        {role === "admin" && view === "admin" ? (
+        {showSavePrompt ? (
+          <section className="mx-auto mt-6 max-w-4xl">
+            <Card className="space-y-5">
+              <SectionHeading
+                title="Save new information?"
+                subtitle="We found new details from this form. Save them to your profile?"
+              />
+              <div className="grid gap-3 sm:grid-cols-2">
+                {saveCandidates.map((item) => (
+                  <div
+                    key={item.key}
+                    className="rounded-2xl border border-sand-200 bg-white p-4"
+                  >
+                    <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                      {item.key}
+                    </p>
+                    <p className="mt-2 text-base text-sand-950">
+                      {item.value}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Button onClick={handleSaveMissing}>Save to profile</Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setShowSavePrompt(false);
+                    setActiveForm(null);
+                    setSaveCandidates([]);
+                  }}
+                >
+                  Not now
+                </Button>
+              </div>
+            </Card>
+          </section>
+        ) : null}
+
+        {role === "admin" && view === "admin" && adminView === "dashboard" ? (
           <section className="mx-auto mt-10 grid max-w-6xl gap-6 lg:grid-cols-[1fr_1fr]">
             <Card className="space-y-5">
               <SectionHeading
@@ -794,246 +1304,827 @@ export default function App() {
                 ) : null}
               </div>
             </Card>
+            <Card className="space-y-5">
+              <SectionHeading
+                title="Form builder"
+                subtitle="Launch the full-screen builder workspace."
+              />
+              <p className="text-sm text-sand-500">
+                Build forms in a dedicated canvas with drag-and-drop components.
+              </p>
+              <Button onClick={() => setAdminView("builder")}>Open builder</Button>
+            </Card>
+            <Card className="space-y-5">
+              <SectionHeading
+                title="Manage forms"
+                subtitle="Browse and organize form templates."
+              />
+              <p className="text-sm text-sand-500">
+                Review every organization and its form templates.
+              </p>
+              <Button onClick={() => setAdminView("manage-orgs")}
+                >Manage forms</Button>
+            </Card>
           </section>
         ) : null}
 
-        {role === "admin" && view === "admin" ? (
-          <section className="mx-auto mt-6 max-w-6xl">
-            <Card className="space-y-6">
-              <SectionHeading
-                title="Form builder"
-                subtitle="Create forms and define fields per organization."
-              />
-              <div className="grid gap-4 sm:grid-cols-2">
-                <ComboBox
-                  value={formOrgId}
-                  onChange={setFormOrgId}
-                  options={adminOrgs.map((org) => ({
-                    value: org._id,
-                    label: org.name,
-                  }))}
-                  placeholder="Search organization"
-                />
-                <Input
-                  placeholder="Form name"
-                  value={formName}
-                  onChange={(event) => setFormName(event.target.value)}
-                />
-                <Input
-                  placeholder="Form description"
-                  value={formDescription}
-                  onChange={(event) => setFormDescription(event.target.value)}
-                />
-              </div>
-              <div className="space-y-3">
+        {role === "admin" && view === "admin" && adminView === "builder" ? (
+          <section className="mx-auto mt-6 min-h-[70vh] max-w-6xl">
+            <div className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-sand-200 bg-white px-4 py-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  variant="ghost"
+                  onClick={() => setAdminView("dashboard")}
+                >
+                  Back to dashboard
+                </Button>
                 <p className="text-sm text-sand-500">
-                  Fields (key should match profile keys, e.g., fullName, email)
+                  Build and tag form components.
                 </p>
-                {formFields.map((field, index) => (
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  variant="secondary"
+                  onClick={() => setShowFormSave(true)}
+                >
+                  Save form
+                </Button>
+              </div>
+            </div>
+            <div className="mt-6 grid gap-6 lg:grid-cols-[260px_1fr]">
+              <div className="flex min-h-[70vh] max-h-[70vh] flex-col space-y-4">
+                <p className="text-xs uppercase tracking-[0.3em] text-sand-500">
+                  Components
+                </p>
+                <Input
+                  placeholder="Search components"
+                  value={componentSearch}
+                  onChange={(event) => setComponentSearch(event.target.value)}
+                />
+                <div
+                  className="grid flex-1 grid-cols-2 gap-2 overflow-y-auto pr-1"
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    if (!draggingComponentId) return;
+                    setFormComponents((prev) =>
+                      prev.filter((item) => item.id !== draggingComponentId)
+                    );
+                    setDraggingComponentId(null);
+                    setDropIndex(null);
+                  }}
+                >
                   <div
-                    key={index}
-                    className="grid gap-3 lg:grid-cols-[1fr_1fr_1fr_auto_auto]"
+                    className="flex aspect-square cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-sand-300 bg-sand-50 p-2 text-center text-[10px] text-sand-700"
+                    onClick={() => setShowCustomComponent(true)}
                   >
-                    <Input
-                      placeholder="Field key"
-                      value={field.key}
-                      onChange={(event) =>
-                        setFormFields((prev) =>
-                          prev.map((item, idx) =>
-                            idx === index
-                              ? { ...item, key: event.target.value }
-                              : item
-                          )
-                        )
+                    <Plus className="h-3.5 w-3.5 text-sand-900" />
+                    <span className="text-[9px] uppercase tracking-[0.2em]">
+                      Add new
+                    </span>
+                    <span className="text-[9px] uppercase tracking-[0.2em]">
+                      component
+                    </span>
+                  </div>
+                  {[
+                    {
+                      type: "text",
+                      label: "Full name",
+                      tag: "fullName",
+                      icon: Type,
+                      iconName: "type",
+                    },
+                    {
+                      type: "email",
+                      label: "Work email",
+                      tag: "workEmail",
+                      icon: Mail,
+                      iconName: "mail",
+                    },
+                    {
+                      type: "email",
+                      label: "Personal email",
+                      tag: "personalEmail",
+                      icon: Mail,
+                      iconName: "mail",
+                    },
+                    {
+                      type: "text",
+                      label: "Address",
+                      tag: "address",
+                      icon: MapPin,
+                      iconName: "map-pin",
+                    },
+                    {
+                      type: "text",
+                      label: "Phone",
+                      tag: "phone",
+                      icon: Phone,
+                      iconName: "phone",
+                    },
+                    {
+                      type: "text",
+                      label: "Citizenship",
+                      tag: "citizenshipNumber",
+                      icon: IdCard,
+                      iconName: "id-card",
+                    },
+                  ]
+                    .filter((component) => {
+                      const query = componentSearch.trim().toLowerCase();
+                      if (!query) return true;
+                      const haystack = `${component.label} ${component.type} ${
+                        component.tag
+                      }`
+                        .toLowerCase()
+                        .trim();
+                      if (haystack.includes(query)) return true;
+                      let qIndex = 0;
+                      for (let i = 0; i < haystack.length; i += 1) {
+                        if (haystack[i] === query[qIndex]) {
+                          qIndex += 1;
+                          if (qIndex === query.length) return true;
+                        }
                       }
-                    />
-                    <Input
-                      placeholder="Label"
-                      value={field.label}
-                      onChange={(event) =>
-                        setFormFields((prev) =>
-                          prev.map((item, idx) =>
-                            idx === index
-                              ? { ...item, label: event.target.value }
-                              : item
-                          )
-                        )
-                      }
-                    />
-                    <Input
-                      placeholder="Type (text, email, date, select)"
-                      value={field.type}
-                      onChange={(event) =>
-                        setFormFields((prev) =>
-                          prev.map((item, idx) =>
-                            idx === index
-                              ? { ...item, type: event.target.value }
-                              : item
-                          )
-                        )
-                      }
-                    />
-                    <Input
-                      placeholder="Options (comma)"
-                      value={field.options}
-                      onChange={(event) =>
-                        setFormFields((prev) =>
-                          prev.map((item, idx) =>
-                            idx === index
-                              ? { ...item, options: event.target.value }
-                              : item
-                          )
-                        )
-                      }
-                    />
-                    <Button
-                      variant={field.required ? "primary" : "ghost"}
-                      type="button"
-                      onClick={() =>
-                        setFormFields((prev) =>
-                          prev.map((item, idx) =>
-                            idx === index
-                              ? { ...item, required: !item.required }
-                              : item
-                          )
-                        )
-                      }
+                      return false;
+                    })
+                    .map((component) => (
+                      <div
+                        key={component.label}
+                        draggable
+                        onClick={() => {
+                          setFormComponents((prev) => [
+                            ...prev,
+                            {
+                              id: `${component.type}-${Date.now()}`,
+                              type: component.type,
+                              label: "",
+                              tag: component.tag || "",
+                              iconName: component.iconName,
+                              required: false,
+                              options: "",
+                            },
+                          ]);
+                        }}
+                        onDragStart={(event) => {
+                          event.dataTransfer.setData(
+                            "component",
+                            JSON.stringify(component)
+                          );
+                        }}
+                        className="flex aspect-square cursor-grab flex-col items-center justify-center gap-1 rounded-xl border border-sand-200 bg-white p-2 text-center text-[10px] text-sand-700"
+                      >
+                        <component.icon className="h-3.5 w-3.5 text-sand-900" />
+                        <span className="text-[9px] uppercase tracking-[0.2em]">
+                          {component.label}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+              <div
+                onDragOver={(event) => event.preventDefault()}
+                onDragEnter={() => setDropIndex(formComponents.length)}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  const payload = event.dataTransfer.getData("component");
+                  const insertAt =
+                    dropIndex === null ? formComponents.length : dropIndex;
+
+                  if (payload) {
+                    const component = JSON.parse(payload) as {
+                      type: string;
+                      label: string;
+                      tag?: string;
+                      iconName?: string;
+                    };
+                    setFormComponents((prev) => {
+                      const nextItem = {
+                        id: `${component.type}-${Date.now()}`,
+                        type: component.type,
+                        label: "",
+                        tag: component.tag || "",
+                        iconName: component.iconName,
+                        required: false,
+                        options: "",
+                      };
+                      const updated = [...prev];
+                      updated.splice(insertAt, 0, nextItem);
+                      return updated;
+                    });
+                  } else if (draggingComponentId) {
+                    setFormComponents((prev) => {
+                      const fromIndex = prev.findIndex(
+                        (item) => item.id === draggingComponentId
+                      );
+                      if (fromIndex === -1) return prev;
+                      const updated = [...prev];
+                      const [moved] = updated.splice(fromIndex, 1);
+                      const targetIndex =
+                        fromIndex < insertAt ? insertAt - 1 : insertAt;
+                      updated.splice(targetIndex, 0, moved);
+                      return updated;
+                    });
+                  }
+                  setDropIndex(null);
+                  setDraggingComponentId(null);
+                }}
+                className="min-h-[70vh] max-h-[70vh] overflow-y-auto rounded-3xl border border-dashed border-sand-300 bg-sand-50 p-6"
+              >
+                {formComponents.length ? (
+                  <div className="space-y-4">
+                    {formComponents.map((component, index) => (
+                      <div key={component.id} className="space-y-3">
+                        {dropIndex === index ? (
+                          <div className="h-1 w-full rounded-full bg-sand-900" />
+                        ) : null}
+                        <div
+                          draggable
+                          onDragStart={(event) => {
+                            event.dataTransfer.setData("reorder", component.id);
+                            setDraggingComponentId(component.id);
+                          }}
+                          onDragEnd={() => {
+                            setDraggingComponentId(null);
+                            setDropIndex(null);
+                          }}
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                            setDropIndex((prev) =>
+                              prev === index ? prev : index
+                            );
+                          }}
+                          className="rounded-2xl border border-sand-200 bg-white p-4"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                {component.iconName ? (
+                                  <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-sand-200 bg-sand-50">
+                                    {component.iconName === "type" ? (
+                                      <Type className="h-3.5 w-3.5 text-sand-900" />
+                                    ) : component.iconName === "mail" ? (
+                                      <Mail className="h-3.5 w-3.5 text-sand-900" />
+                                    ) : component.iconName === "calendar" ? (
+                                      <Calendar className="h-3.5 w-3.5 text-sand-900" />
+                                    ) : component.iconName === "map-pin" ? (
+                                      <MapPin className="h-3.5 w-3.5 text-sand-900" />
+                                    ) : component.iconName === "phone" ? (
+                                      <Phone className="h-3.5 w-3.5 text-sand-900" />
+                                    ) : component.iconName === "id-card" ? (
+                                      <IdCard className="h-3.5 w-3.5 text-sand-900" />
+                                    ) : component.iconName === "image" ? (
+                                      <Image className="h-3.5 w-3.5 text-sand-900" />
+                                    ) : component.iconName === "file-text" ? (
+                                      <FileText className="h-3.5 w-3.5 text-sand-900" />
+                                    ) : component.iconName === "user" ? (
+                                      <User className="h-3.5 w-3.5 text-sand-900" />
+                                    ) : component.iconName === "shield" ? (
+                                      <Shield className="h-3.5 w-3.5 text-sand-900" />
+                                    ) : (
+                                      <BadgeCheck className="h-3.5 w-3.5 text-sand-900" />
+                                    )}
+                                  </span>
+                                ) : null}
+                                <p className="text-sm font-semibold text-sand-950">
+                                  {component.label || "Untitled field"}
+                                </p>
+                              </div>
+                              <p className="text-xs text-sand-500">
+                                Tag: {component.tag || "none"}
+                              </p>
+                            </div>
+                            <div className="flex gap-2">
+                              <Button
+                                variant={component.required ? "primary" : "ghost"}
+                                type="button"
+                                onClick={() =>
+                                  setFormComponents((prev) =>
+                                    prev.map((item, idx) =>
+                                      idx === index
+                                        ? { ...item, required: !item.required }
+                                        : item
+                                    )
+                                  )
+                                }
+                              >
+                                {component.required ? "Required" : "Optional"}
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                type="button"
+                                onClick={() =>
+                                  setFormComponents((prev) =>
+                                    prev.filter((_, idx) => idx !== index)
+                                  )
+                                }
+                              >
+                                Remove
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="mt-3 rounded-2xl border border-dashed border-sand-200 bg-sand-50 p-3">
+                          {component.type === "select" ? (
+                            <p className="text-xs text-sand-500">
+                              Select: {component.options || "No options"}
+                            </p>
+                          ) : component.type === "date" ? (
+                            <p className="text-xs text-sand-500">Date picker</p>
+                          ) : component.type === "email" ? (
+                            <p className="text-xs text-sand-500">Email input</p>
+                          ) : component.type === "image" ? (
+                            <p className="text-xs text-sand-500">Image upload</p>
+                          ) : (
+                            <p className="text-xs text-sand-500">Text input</p>
+                          )}
+                        </div>
+                        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                          <Input
+                            placeholder="Label"
+                            value={component.label}
+                            onChange={(event) =>
+                              setFormComponents((prev) =>
+                                prev.map((item, idx) =>
+                                  idx === index
+                                    ? { ...item, label: event.target.value }
+                                    : item
+                                )
+                              )
+                            }
+                          />
+                          <Input
+                            placeholder="Tag (maps to profile key)"
+                            value={component.tag}
+                            onChange={(event) =>
+                              setFormComponents((prev) =>
+                                prev.map((item, idx) =>
+                                  idx === index
+                                    ? { ...item, tag: event.target.value }
+                                    : item
+                                )
+                              )
+                            }
+                          />
+                          <Select
+                            value={component.type}
+                            onChange={(event) =>
+                              setFormComponents((prev) =>
+                                prev.map((item, idx) =>
+                                  idx === index
+                                    ? { ...item, type: event.target.value }
+                                    : item
+                                )
+                              )
+                            }
+                          >
+                            <option value="text">text</option>
+                            <option value="email">email</option>
+                            <option value="date">date</option>
+                            <option value="select">select</option>
+                            <option value="image">image</option>
+                          </Select>
+                          <Input
+                            placeholder="Options (comma)"
+                            value={component.options}
+                            onChange={(event) =>
+                              setFormComponents((prev) =>
+                                prev.map((item, idx) =>
+                                  idx === index
+                                    ? { ...item, options: event.target.value }
+                                    : item
+                                )
+                              )
+                            }
+                          />
+                        </div>
+                      </div>
+                    ))}
+                    <div
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        setDropIndex((prev) =>
+                          prev === formComponents.length
+                            ? prev
+                            : formComponents.length
+                        );
+                      }}
+                      className="h-6"
                     >
-                      {field.required ? "Required" : "Optional"}
-                    </Button>
+                      {dropIndex === formComponents.length ? (
+                        <div className="h-1 w-full rounded-full bg-sand-900" />
+                      ) : null}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex h-full items-center justify-center">
+                    <p className="text-sm text-sand-500">
+                      Drag components here to build the form.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+            {showFormSave ? (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+                <div className="w-full max-w-lg rounded-3xl border border-sand-200 bg-white p-6 shadow-xl">
+                  <div className="space-y-2">
+                     <h3 className="text-xl font-semibold text-sand-950">
+                       {formId ? "Update form" : "Save form"}
+                     </h3>
+                     <p className="text-sm text-sand-500">
+                       Choose an organization and describe this form.
+                     </p>
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    <ComboBox
+                      value={formOrgId}
+                      onChange={setFormOrgId}
+                      options={adminOrgs.map((org) => ({
+                        value: org._id,
+                        label: org.name,
+                      }))}
+                      placeholder="Search organization"
+                    />
+                    <Input
+                      placeholder="Form name"
+                      value={formName}
+                      onChange={(event) => setFormName(event.target.value)}
+                    />
+                    <Input
+                      placeholder="Form description"
+                      value={formDescription}
+                      onChange={(event) => setFormDescription(event.target.value)}
+                    />
+                  </div>
+                  <div className="mt-6 flex flex-wrap gap-3">
+                     <Button onClick={handleCreateForm}>
+                       {formId ? "Update form" : "Save form"}
+                     </Button>
                     <Button
                       variant="ghost"
-                      type="button"
-                      onClick={() =>
-                        setFormFields((prev) =>
-                          prev.filter((_, idx) => idx !== index)
-                        )
-                      }
+                      onClick={() => setShowFormSave(false)}
                     >
-                      Remove
+                      Cancel
                     </Button>
                   </div>
-                ))}
-                <div className="flex flex-col gap-3 sm:flex-row">
-                  <Button
-                    variant="secondary"
-                    type="button"
-                    onClick={() =>
-                      setFormFields((prev) => [
-                        ...prev,
-                        {
-                          key: "",
-                          label: "",
-                          type: "text",
-                          required: false,
-                          options: "",
-                        },
-                      ])
-                    }
-                  >
-                    Add field
-                  </Button>
-                  <Button onClick={handleCreateForm}>Create form</Button>
+                  {formMessage ? (
+                    <p className="mt-3 text-sm text-sand-500">{formMessage}</p>
+                  ) : null}
                 </div>
-                {formMessage ? (
-                  <p className="text-sm text-sand-500">{formMessage}</p>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+
+        {role === "admin" && view === "admin" && adminView === "manage-orgs" ? (
+          <section className="mx-auto mt-6 max-w-6xl">
+            <Card className="space-y-6">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <SectionHeading
+                  title="Manage forms"
+                  subtitle="Select an organization to see its templates."
+                />
+                <Button
+                  variant="ghost"
+                  onClick={() => setAdminView("dashboard")}
+                >
+                  Back to dashboard
+                </Button>
+              </div>
+              <Input
+                placeholder="Search organizations"
+                value={manageOrgQuery}
+                onChange={(event) => setManageOrgQuery(event.target.value)}
+              />
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {filteredAdminOrgs.map((org) => (
+                  <Card key={org._id} className="space-y-2">
+                    <p className="text-lg font-semibold text-sand-950">
+                      {org.name}
+                    </p>
+                    <p className="text-sm text-sand-500">{org.slug}</p>
+                    <Button
+                      variant="secondary"
+                      onClick={() => handleOpenManageOrg(org)}
+                    >
+                      View forms
+                    </Button>
+                  </Card>
+                ))}
+                {!filteredAdminOrgs.length ? (
+                  <p className="text-sm text-sand-500">
+                    No organizations match that search.
+                  </p>
                 ) : null}
               </div>
             </Card>
           </section>
         ) : null}
 
-        {role === "user" && view === "user" ? (
-        <section className="mx-auto mt-10 grid max-w-6xl gap-6 lg:grid-cols-[1fr_1fr]">
-          <Card className="space-y-5">
-            <SectionHeading
-              title="Submission status"
-              subtitle="Track every form after submission."
-            />
-            <div className="space-y-4">
-              {submissions.map((submission) => (
-                <div
-                  key={submission._id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sand-200 bg-white p-4"
-                >
-                  <div>
-                    <p className="font-semibold text-sand-950">
-                      {typeof submission.formId === "string"
-                        ? `Form ${submission.formId}`
-                        : submission.formId.name}
-                    </p>
-                    <p className="text-sm text-sand-500">
-                      {new Date(submission.createdAt).toLocaleString()}
-                    </p>
-                    {submission.reviewNotes ? (
-                      <p className="text-sm text-sand-500">
-                        Notes: {submission.reviewNotes}
-                      </p>
-                    ) : null}
-                    {submission.cooldownUntil ? (
-                      <p className="text-sm text-sand-500">
-                        Cooldown until: {new Date(submission.cooldownUntil).toLocaleDateString()}
-                      </p>
-                    ) : null}
-                  </div>
-                  <StatusPill
-                    status={
-                      submission.status as "pending" | "completed" | "rejected"
-                    }
-                  />
+        {role === "admin" && view === "admin" && adminView === "manage-forms" ? (
+          <section className="mx-auto mt-6 max-w-6xl">
+            <Card className="space-y-6">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <SectionHeading
+                  title={
+                    selectedManageOrg
+                      ? `Forms for ${selectedManageOrg.name}`
+                      : "Organization forms"
+                  }
+                  subtitle="Search and review every template."
+                />
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="ghost"
+                    onClick={() => setAdminView("manage-orgs")}
+                  >
+                    Back to organizations
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={() => setAdminView("dashboard")}
+                  >
+                    Back to dashboard
+                  </Button>
                 </div>
-              ))}
-              {!submissions.length ? (
-                <p className="text-sm text-sand-500">No submissions yet.</p>
-              ) : null}
-            </div>
-          </Card>
+              </div>
+              <Input
+                placeholder="Search forms"
+                value={manageFormQuery}
+                onChange={(event) => setManageFormQuery(event.target.value)}
+              />
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {filteredManageForms.map((form) => (
+                  <Card key={form._id} className="space-y-3">
+                    <div className="space-y-1">
+                      <p className="text-lg font-semibold text-sand-950">
+                        {form.name}
+                      </p>
+                      <p className="text-sm text-sand-500">
+                        {form.description || "No description"}
+                      </p>
+                    </div>
+                    <Button
+                      variant="secondary"
+                      onClick={() => handleEditManageForm(form)}
+                    >
+                      Edit form
+                    </Button>
+                  </Card>
+                ))}
+                {manageFormsLoading ? (
+                  <p className="text-sm text-sand-500">Loading forms...</p>
+                ) : null}
+                {!manageFormsLoading && !filteredManageForms.length ? (
+                  <p className="text-sm text-sand-500">
+                    No forms match that search.
+                  </p>
+                ) : null}
+              </div>
+            </Card>
+          </section>
+        ) : null}
 
-          <Card className="space-y-5">
-            <SectionHeading
-              title="Next steps"
-              subtitle="Confirm the autofilled details and submit in minutes."
-            />
-            <div className="space-y-4">
-              <div className="rounded-2xl border border-sand-200 bg-white p-4">
-                <p className="text-sm uppercase tracking-[0.2em] text-sand-500">
-                  Step 1
-                </p>
-                <p className="mt-2 text-lg font-semibold text-sand-950">
-                  Update your profile data once
-                </p>
-                <p className="text-sm text-sand-500">
-                  Your saved profile drives every autofill request.
-                </p>
+        {showCustomComponent ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+            <div className="w-full max-w-lg rounded-3xl border border-sand-200 bg-white p-6 shadow-xl">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-2">
+                  <h3 className="text-xl font-semibold text-sand-950">
+                    Add a new component
+                  </h3>
+                  <p className="text-sm text-sand-500">
+                    Define the input type, label, tag, and any options.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowCustomComponent(false)}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-sand-200 text-sand-700 transition hover:border-sand-900 hover:text-sand-900"
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               </div>
-              <div className="rounded-2xl border border-sand-200 bg-white p-4">
-                <p className="text-sm uppercase tracking-[0.2em] text-sand-500">
-                  Step 2
-                </p>
-                <p className="mt-2 text-lg font-semibold text-sand-950">
-                  Review and confirm before submit
-                </p>
-                <p className="text-sm text-sand-500">
-                  Edits are always possible before delivery.
-                </p>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <Input
+                  placeholder="Label"
+                  value={customComponent.label}
+                  onChange={(event) =>
+                    setCustomComponent((prev) => ({
+                      ...prev,
+                      label: event.target.value,
+                    }))
+                  }
+                />
+                <Input
+                  placeholder="Tag (maps to profile key)"
+                  value={customComponent.tag}
+                  onChange={(event) =>
+                    setCustomComponent((prev) => ({
+                      ...prev,
+                      tag: event.target.value,
+                    }))
+                  }
+                />
+                <Select
+                  value={customComponent.type}
+                  onChange={(event) =>
+                    setCustomComponent((prev) => ({
+                      ...prev,
+                      type: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="text">text</option>
+                  <option value="email">email</option>
+                  <option value="date">date</option>
+                  <option value="select">select</option>
+                  <option value="image">image</option>
+                </Select>
+                <Input
+                  placeholder={
+                    customComponent.type === "image"
+                      ? "Accepted formats (e.g., jpg,png)"
+                      : "Options (comma)"
+                  }
+                  value={customComponent.options}
+                  onChange={(event) =>
+                    setCustomComponent((prev) => ({
+                      ...prev,
+                      options: event.target.value,
+                    }))
+                  }
+                />
               </div>
-              <div className="rounded-2xl border border-sand-200 bg-white p-4">
-                <p className="text-sm uppercase tracking-[0.2em] text-sand-500">
-                  Step 3
-                </p>
-                <p className="mt-2 text-lg font-semibold text-sand-950">
-                  Track approvals in real time
-                </p>
-                <p className="text-sm text-sand-500">
-                  Accepted forms lock for 30 days.
-                </p>
+              <div className="mt-4 grid grid-cols-4 gap-2">
+                {[
+                  { name: "type", Icon: Type },
+                  { name: "mail", Icon: Mail },
+                  { name: "calendar", Icon: Calendar },
+                  { name: "map-pin", Icon: MapPin },
+                  { name: "phone", Icon: Phone },
+                  { name: "id-card", Icon: IdCard },
+                  { name: "image", Icon: Image },
+                  { name: "file-text", Icon: FileText },
+                  { name: "user", Icon: User },
+                  { name: "shield", Icon: Shield },
+                  { name: "badge-check", Icon: BadgeCheck },
+                ]
+                  .map((icon) => (
+                    <button
+                      key={icon.name}
+                      type="button"
+                      onClick={() =>
+                        setCustomComponent((prev) => ({
+                          ...prev,
+                          iconName: icon.name,
+                        }))
+                      }
+                      className={`flex items-center justify-center rounded-2xl border p-2 ${
+                        customComponent.iconName === icon.name
+                          ? "border-sand-900"
+                          : "border-sand-200"
+                      }`}
+                    >
+                      <icon.Icon className="h-4 w-4 text-sand-900" />
+                    </button>
+                  ))}
+              </div>
+              <div className="mt-6 flex flex-wrap gap-3">
+                <Button
+                  onClick={() => {
+                    if (!customComponent.label.trim()) return;
+                    setFormComponents((prev) => [
+                      ...prev,
+                      {
+                        id: `custom-${Date.now()}`,
+                        type: customComponent.type,
+                        label: customComponent.label,
+                        tag: customComponent.tag,
+                        iconName: customComponent.iconName,
+                        required: customComponent.required,
+                        options: customComponent.options,
+                      },
+                    ]);
+                    setCustomComponent({
+                      label: "",
+                      type: "text",
+                      tag: "",
+                      iconName: "type",
+                      required: false,
+                      options: "",
+                    });
+                    setShowCustomComponent(false);
+                  }}
+                >
+                  Add component
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => setShowCustomComponent(false)}
+                >
+                  Cancel
+                </Button>
               </div>
             </div>
-            <Button size="lg" className="w-full" onClick={() => setView("profile")}>
-              Go to profile
-            </Button>
-          </Card>
-        </section>
+          </div>
+        ) : null}
+
+        {role === "user" && view === "user" ? (
+          <section className="mx-auto mt-10 grid max-w-6xl gap-6 lg:grid-cols-[1fr_1fr]">
+            <Card className="space-y-5">
+              <SectionHeading
+                title="Submission status"
+                subtitle="Track every form after submission."
+              />
+              <div className="space-y-4">
+                {submissions.map((submission) => (
+                  <div
+                    key={submission._id}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sand-200 bg-white p-4"
+                  >
+                    <div>
+                      <p className="font-semibold text-sand-950">
+                        {typeof submission.formId === "string"
+                          ? `Form ${submission.formId}`
+                          : submission.formId.name}
+                      </p>
+                      <p className="text-sm text-sand-500">
+                        {new Date(submission.createdAt).toLocaleString()}
+                      </p>
+                      {submission.reviewNotes ? (
+                        <p className="text-sm text-sand-500">
+                          Notes: {submission.reviewNotes}
+                        </p>
+                      ) : null}
+                      {submission.cooldownUntil ? (
+                        <p className="text-sm text-sand-500">
+                          Cooldown until: {new Date(
+                            submission.cooldownUntil
+                          ).toLocaleDateString()}
+                        </p>
+                      ) : null}
+                    </div>
+                    <StatusPill
+                      status={
+                        submission.status as "pending" | "completed" | "rejected"
+                      }
+                    />
+                  </div>
+                ))}
+                {!submissions.length ? (
+                  <p className="text-sm text-sand-500">No submissions yet.</p>
+                ) : null}
+              </div>
+            </Card>
+
+            <Card className="space-y-5">
+              <SectionHeading
+                title="Next steps"
+                subtitle="Confirm the autofilled details and submit in minutes."
+              />
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-sand-200 bg-white p-4">
+                  <p className="text-sm uppercase tracking-[0.2em] text-sand-500">
+                    Step 1
+                  </p>
+                  <p className="mt-2 text-lg font-semibold text-sand-950">
+                    Update your profile data once
+                  </p>
+                  <p className="text-sm text-sand-500">
+                    Your saved profile drives every autofill request.
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-sand-200 bg-white p-4">
+                  <p className="text-sm uppercase tracking-[0.2em] text-sand-500">
+                    Step 2
+                  </p>
+                  <p className="mt-2 text-lg font-semibold text-sand-950">
+                    Review and confirm before submit
+                  </p>
+                  <p className="text-sm text-sand-500">
+                    Edits are always possible before delivery.
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-sand-200 bg-white p-4">
+                  <p className="text-sm uppercase tracking-[0.2em] text-sand-500">
+                    Step 3
+                  </p>
+                  <p className="mt-2 text-lg font-semibold text-sand-950">
+                    Track approvals in real time
+                  </p>
+                  <p className="text-sm text-sand-500">
+                    Accepted forms lock for 30 days.
+                  </p>
+                </div>
+              </div>
+              <Button size="lg" className="w-full" onClick={() => setView("profile")}>
+                Go to profile
+              </Button>
+            </Card>
+          </section>
         ) : null}
 
         {role === "organization" && view === "org" ? (
@@ -1159,132 +2250,202 @@ export default function App() {
             </Card>
           </section>
         ) : null}
+          </>
+        ) : null}
 
         {role === "user" && view === "profile" ? (
-        <section className="mx-auto mt-10 max-w-6xl">
-          <Card className="space-y-6">
-            <SectionHeading
-              title="Profile editor"
-              subtitle="Save your details once to autofill every form."
-            />
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Input
-                placeholder="Full name"
-                value={profileDraft.primary?.fullName || ""}
-                onChange={(event) =>
-                  setProfileDraft((prev) => ({
-                    ...prev,
-                    primary: { ...prev.primary, fullName: event.target.value },
-                  }))
-                }
+          <section className="mx-auto mt-10 max-w-6xl">
+            <Card className="space-y-6">
+              <SectionHeading
+                title="Profile information"
+                subtitle="Update your details anytime."
               />
-              <Input
-                placeholder="Email"
-                value={profileDraft.primary?.email || ""}
-                onChange={(event) =>
-                  setProfileDraft((prev) => ({
-                    ...prev,
-                    primary: { ...prev.primary, email: event.target.value },
-                  }))
-                }
-              />
-              <Input
-                placeholder="Phone"
-                value={profileDraft.primary?.phone || ""}
-                onChange={(event) =>
-                  setProfileDraft((prev) => ({
-                    ...prev,
-                    primary: { ...prev.primary, phone: event.target.value },
-                  }))
-                }
-              />
-              <Input
-                placeholder="Address"
-                value={profileDraft.primary?.address || ""}
-                onChange={(event) =>
-                  setProfileDraft((prev) => ({
-                    ...prev,
-                    primary: { ...prev.primary, address: event.target.value },
-                  }))
-                }
-              />
-              <Input
-                placeholder="Date of birth"
-                value={profileDraft.primary?.dob || ""}
-                onChange={(event) =>
-                  setProfileDraft((prev) => ({
-                    ...prev,
-                    primary: { ...prev.primary, dob: event.target.value },
-                  }))
-                }
-              />
-            </div>
-            <div className="space-y-3">
-              <p className="text-sm text-sand-500">Custom fields</p>
-              {extraEntries.map((entry, index) => (
-                <div
-                  key={`${entry.key}-${index}`}
-                  className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]"
-                >
-                  <Input
-                    placeholder="Field key (e.g., passportNumber)"
-                    value={entry.key}
-                    onChange={(event) =>
-                      setExtraEntries((prev) =>
-                        prev.map((item, idx) =>
-                          idx === index
-                            ? { ...item, key: event.target.value }
-                            : item
-                        )
-                      )
-                    }
-                  />
-                  <Input
-                    placeholder="Field value"
-                    value={entry.value}
-                    onChange={(event) =>
-                      setExtraEntries((prev) =>
-                        prev.map((item, idx) =>
-                          idx === index
-                            ? { ...item, value: event.target.value }
-                            : item
-                        )
-                      )
-                    }
-                  />
-                  <Button
-                    variant="ghost"
-                    type="button"
-                    onClick={() =>
-                      setExtraEntries((prev) =>
-                        prev.filter((_, idx) => idx !== index)
-                      )
-                    }
-                  >
-                    Remove
-                  </Button>
-                </div>
-              ))}
-              <Button
-                variant="secondary"
-                type="button"
-                onClick={() =>
-                  setExtraEntries((prev) => [...prev, { key: "", value: "" }])
-                }
-              >
-                Add field
-              </Button>
-            </div>
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <Button onClick={handleProfileSave}>Save profile</Button>
-            </div>
-            {profileMessage ? (
-              <p className="text-sm text-sand-500">{profileMessage}</p>
-            ) : null}
-          </Card>
-        </section>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Input
+                  placeholder="Full name"
+                  value={profileDraft.fullName || ""}
+                  onChange={(event) =>
+                    setProfileDraft((prev) => ({
+                      ...prev,
+                      fullName: event.target.value,
+                    }))
+                  }
+                />
+                <Input
+                  placeholder="Work email"
+                  value={profileDraft.workEmail || ""}
+                  onChange={(event) =>
+                    setProfileDraft((prev) => ({
+                      ...prev,
+                      workEmail: event.target.value,
+                    }))
+                  }
+                />
+                <Input
+                  placeholder="Personal email"
+                  value={profileDraft.personalEmail || ""}
+                  onChange={(event) =>
+                    setProfileDraft((prev) => ({
+                      ...prev,
+                      personalEmail: event.target.value,
+                    }))
+                  }
+                />
+                <Input
+                  placeholder="Address"
+                  value={profileDraft.address || ""}
+                  onChange={(event) =>
+                    setProfileDraft((prev) => ({
+                      ...prev,
+                      address: event.target.value,
+                    }))
+                  }
+                />
+                <Input
+                  placeholder="Phone number"
+                  value={profileDraft.phone || ""}
+                  onChange={(event) =>
+                    setProfileDraft((prev) => ({
+                      ...prev,
+                      phone: event.target.value,
+                    }))
+                  }
+                />
+                <Input
+                  placeholder="Citizenship number"
+                  value={profileDraft.citizenshipNumber || ""}
+                  onChange={(event) =>
+                    setProfileDraft((prev) => ({
+                      ...prev,
+                      citizenshipNumber: event.target.value,
+                    }))
+                  }
+                />
+                <Input
+                  placeholder="Profile photo (placeholder)"
+                  value={profileDraft.profilePhotoUrl || ""}
+                  onChange={(event) =>
+                    setProfileDraft((prev) => ({
+                      ...prev,
+                      profilePhotoUrl: event.target.value,
+                    }))
+                  }
+                />
+                <Input
+                  placeholder="Citizenship photo (placeholder)"
+                  value={profileDraft.citizenshipPhotoUrl || ""}
+                  onChange={(event) =>
+                    setProfileDraft((prev) => ({
+                      ...prev,
+                      citizenshipPhotoUrl: event.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <Button onClick={handleProfileSave}>Save profile</Button>
+              </div>
+              {profileMessage ? (
+                <p className="text-sm text-sand-500">{profileMessage}</p>
+              ) : null}
+            </Card>
+          </section>
         ) : null}
       </main>
     </div>
   );
 }
+
+const LandingPage = () => (
+  <div className="min-h-screen bg-white">
+    <header className="px-6 py-6 sm:px-10">
+      <nav className="mx-auto flex max-w-6xl items-center justify-between">
+        <div className="space-y-1">
+          <p className="text-sm uppercase tracking-[0.2em] text-sand-500">
+            Omniform
+          </p>
+          <h1 className="text-2xl font-semibold text-sand-950 sm:text-3xl">
+            End the data tax
+          </h1>
+        </div>
+        <div className="flex items-center gap-3">
+          <SignInButton>
+            <Button size="sm">Sign in</Button>
+          </SignInButton>
+        </div>
+      </nav>
+    </header>
+
+    <main className="px-6 pb-16 sm:px-10">
+      <section className="mx-auto grid max-w-6xl gap-8 lg:grid-cols-[1.1fr_0.9fr]">
+        <div className="space-y-6">
+          <p className="text-xs uppercase tracking-[0.4em] text-sand-500">
+            Creative Clash 2026
+          </p>
+          <h2 className="text-4xl font-semibold text-sand-950 sm:text-5xl">
+            One profile. Every form. Zero retyping.
+          </h2>
+          <p className="text-base text-sand-700 sm:text-lg">
+            Omniform keeps your core details secure and ready. Sign in once and
+            reuse your profile whenever you need to submit a form.
+          </p>
+          <div className="flex flex-wrap gap-3">
+            <SignInButton>
+              <Button size="lg">Start filling</Button>
+            </SignInButton>
+            <Button variant="secondary" size="lg">
+              See how it works
+            </Button>
+          </div>
+          <div className="flex flex-wrap gap-6 text-sm text-sand-500">
+            <span>Secure by design</span>
+            <span>Role-based access</span>
+            <span>Built for banks, clinics, campuses</span>
+          </div>
+        </div>
+        <div className="grid gap-4">
+          <Card className="space-y-3">
+            <p className="text-xs uppercase tracking-[0.3em] text-sand-500">
+              Live forms
+            </p>
+            <p className="text-xl font-semibold text-sand-950">
+              Organizations publish, users fill
+            </p>
+            <p className="text-sm text-sand-500">
+              Drag-and-drop form builder for admins, clean review flow for
+              organizations.
+            </p>
+          </Card>
+          <Card className="space-y-3">
+            <p className="text-xs uppercase tracking-[0.3em] text-sand-500">
+              Autofill intelligence
+            </p>
+            <p className="text-xl font-semibold text-sand-950">
+              Tags map to your profile
+            </p>
+            <p className="text-sm text-sand-500">
+              Each field is tagged to your saved info, with prompts to save
+              missing details.
+            </p>
+          </Card>
+        </div>
+      </section>
+
+      <section className="mx-auto mt-12 max-w-6xl">
+        <Card className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.3em] text-sand-500">
+              Ready to stop retyping?
+            </p>
+            <h3 className="text-2xl font-semibold text-sand-950">
+              Sign in and build your profile once.
+            </h3>
+          </div>
+          <SignInButton>
+            <Button size="lg">Get started</Button>
+          </SignInButton>
+        </Card>
+      </section>
+    </main>
+  </div>
+);

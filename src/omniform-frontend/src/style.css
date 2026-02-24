@@ -49,6 +49,12 @@
     text-decoration: none;
   }
 
+  select,
+  option {
+    background-color: #ffffff;
+    color: #111111;
+  }
+
   img {
     max-width: 100%;
     display: block;

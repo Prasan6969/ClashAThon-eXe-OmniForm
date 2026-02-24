@@ -15,12 +15,27 @@ router.get("/me", requireRole("user"), async (req, res) => {
 
 router.put("/me", requireRole("user"), async (req, res) => {
   try {
-    const { primary, extra } = req.body;
+    const {
+      fullName,
+      workEmail,
+      personalEmail,
+      address,
+      phone,
+      citizenshipNumber,
+      profilePhotoUrl,
+      citizenshipPhotoUrl,
+    } = req.body;
     const profile = await UserProfile.findOneAndUpdate(
       { userId: req.auth.userId },
       {
-        primary: primary || {},
-        extra: extra || {},
+        fullName,
+        workEmail,
+        personalEmail,
+        address,
+        phone,
+        citizenshipNumber,
+        profilePhotoUrl,
+        citizenshipPhotoUrl,
       },
       { returnDocument: "after", upsert: true }
     );

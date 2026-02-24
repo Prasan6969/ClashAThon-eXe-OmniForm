@@ -164,7 +164,7 @@ router.get(
 router.post("/orgs/:orgId/forms", requireRole("admin"), async (req, res) => {
   try {
     const { orgId } = req.params;
-    const { name, description, fields } = req.body;
+    const { name, description, fields, components } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(orgId)) {
       return res.status(400).json({ error: "Invalid organization ID" });
@@ -184,6 +184,7 @@ router.post("/orgs/:orgId/forms", requireRole("admin"), async (req, res) => {
       name: name.trim(),
       description: description ? description.trim() : undefined,
       fields: Array.isArray(fields) ? fields : [],
+      components: Array.isArray(components) ? components : [],
     });
 
     return res.status(201).json({ data: form });
@@ -191,5 +192,78 @@ router.post("/orgs/:orgId/forms", requireRole("admin"), async (req, res) => {
     return res.status(500).json({ error: "Failed to create form" });
   }
 });
+
+router.get(
+  "/orgs/:orgId/forms/:formId",
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const { orgId, formId } = req.params;
+
+      if (!mongoose.Types.ObjectId.isValid(orgId)) {
+        return res.status(400).json({ error: "Invalid organization ID" });
+      }
+
+      if (!mongoose.Types.ObjectId.isValid(formId)) {
+        return res.status(400).json({ error: "Invalid form ID" });
+      }
+
+      const form = await Form.findOne({
+        _id: formId,
+        organizationId: orgId,
+      });
+
+      if (!form) {
+        return res.status(404).json({ error: "Form not found" });
+      }
+
+      return res.json({ data: form });
+    } catch (error) {
+      return res.status(500).json({ error: "Failed to fetch form" });
+    }
+  }
+);
+
+router.put(
+  "/orgs/:orgId/forms/:formId",
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const { orgId, formId } = req.params;
+      const { name, description, fields, components } = req.body;
+
+      if (!mongoose.Types.ObjectId.isValid(orgId)) {
+        return res.status(400).json({ error: "Invalid organization ID" });
+      }
+
+      if (!mongoose.Types.ObjectId.isValid(formId)) {
+        return res.status(400).json({ error: "Invalid form ID" });
+      }
+
+      if (!name || !name.trim()) {
+        return res.status(400).json({ error: "Form name is required" });
+      }
+
+      const form = await Form.findOneAndUpdate(
+        { _id: formId, organizationId: orgId },
+        {
+          name: name.trim(),
+          description: description ? description.trim() : undefined,
+          fields: Array.isArray(fields) ? fields : [],
+          components: Array.isArray(components) ? components : [],
+        },
+        { new: true }
+      );
+
+      if (!form) {
+        return res.status(404).json({ error: "Form not found" });
+      }
+
+      return res.json({ data: form });
+    } catch (error) {
+      return res.status(500).json({ error: "Failed to update form" });
+    }
+  }
+);
 
 module.exports = router;

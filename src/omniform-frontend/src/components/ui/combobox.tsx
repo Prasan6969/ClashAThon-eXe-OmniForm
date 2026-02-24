@@ -54,7 +54,7 @@ export const ComboBox = ({
       ) : (
         <>
           <input
-            className="w-full rounded-2xl border border-sand-300 bg-sand-50 px-4 py-2.5 text-base text-sand-950 placeholder:text-sand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sand-400"
+            className="w-full rounded-2xl border border-sand-300 bg-sand-50 px-4 py-2.5 text-base text-sand-950 placeholder:text-sand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sand-900"
             placeholder={placeholder}
             value={query}
             onChange={(event) => {
