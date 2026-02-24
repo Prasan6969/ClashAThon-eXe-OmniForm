@@ -1,6 +1,7 @@
 node_modules/
 jspm_packages/
 .env
+src/omniform-frontend/.env
 .env.local
 .env.development.local
 .env.test.local
