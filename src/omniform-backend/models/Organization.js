@@ -9,6 +9,16 @@ const OrganizationSchema = new mongoose.Schema(
       enum: ["active", "inactive"],
       default: "active",
     },
+    panNumber: { type: String, trim: true },
+    licenseNumber: { type: String, trim: true },
+    location: { type: String, trim: true },
+    subscriptionStatus: {
+      type: String,
+      enum: ["active", "canceled", "expired"],
+      default: "active",
+    },
+    subscriptionStartsAt: { type: Date },
+    subscriptionEndsAt: { type: Date },
     createdBy: { type: String, required: true },
   },
   { timestamps: true }

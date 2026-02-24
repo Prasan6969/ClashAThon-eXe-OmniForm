@@ -1,5 +1,6 @@
 import { createRoot } from "react-dom/client";
 import { ClerkProvider } from "@clerk/clerk-react";
+import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import "./style.css";
 
@@ -20,7 +21,9 @@ if (container) {
   } else {
     createRoot(container).render(
       <ClerkProvider publishableKey={publishableKey}>
-        <App />
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
       </ClerkProvider>
     );
   }

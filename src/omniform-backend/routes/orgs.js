@@ -7,13 +7,33 @@ const router = express.Router();
 
 router.get("/", requireRole(["admin", "user", "organization"]), async (req, res) => {
   try {
+    const now = new Date();
+    await Organization.updateMany(
+      {
+        subscriptionStatus: "active",
+        subscriptionEndsAt: { $lt: now },
+      },
+      { $set: { subscriptionStatus: "expired" } }
+    );
     const query = req.query.query ? req.query.query.trim() : "";
-    const filter = query
-      ? { $text: { $search: query }, status: "active" }
-      : { status: "active" };
+    const filter = query ? { $text: { $search: query } } : {};
+    const role = req.auth?.role;
+
+    if (role !== "admin") {
+      filter.status = "active";
+    }
+
+    if (role === "user") {
+      filter.subscriptionStatus = "active";
+      filter.subscriptionEndsAt = { $gte: new Date() };
+    }
+
+    if (role === "organization") {
+      filter._id = req.auth?.organizationId;
+    }
 
     const orgs = await Organization.find(filter)
-      .select("name slug status")
+      .select("name slug status subscriptionStatus subscriptionStartsAt subscriptionEndsAt")
       .sort({ name: 1 })
       .limit(50);
 
@@ -30,10 +50,28 @@ router.get(
     try {
       const { orgId } = req.params;
       const query = req.query.query ? req.query.query.trim() : "";
+      const role = req.auth?.role;
       const filter = {
         organizationId: orgId,
-        status: "active",
       };
+
+      if (role !== "admin") {
+        filter.status = "active";
+      }
+
+      if (role === "user") {
+        const org = await Organization.findById(orgId).select(
+          "subscriptionStatus status subscriptionEndsAt"
+        );
+        if (
+          !org ||
+          org.status !== "active" ||
+          org.subscriptionStatus !== "active" ||
+          (org.subscriptionEndsAt && org.subscriptionEndsAt < new Date())
+        ) {
+          return res.json({ data: [] });
+        }
+      }
       if (query) {
         filter.$text = { $search: query };
       }

@@ -16,7 +16,13 @@ const slugify = (value) =>
 
 router.post("/orgs", requireRole("admin"), async (req, res) => {
   try {
-    const { name, organizationUserId } = req.body;
+    const {
+      name,
+      organizationUserId,
+      subscriptionStatus,
+      subscriptionStartsAt,
+      subscriptionEndsAt,
+    } = req.body;
     if (!name || !name.trim()) {
       return res.status(400).json({ error: "Organization name is required" });
     }
@@ -27,11 +33,33 @@ router.post("/orgs", requireRole("admin"), async (req, res) => {
       return res.status(409).json({ error: "Organization already exists" });
     }
 
-    const org = await Organization.create({
+    const createPayload = {
       name: name.trim(),
       slug,
       createdBy: req.auth.userId,
-    });
+    };
+
+    if (["active", "canceled", "expired"].includes(subscriptionStatus)) {
+      createPayload.subscriptionStatus = subscriptionStatus;
+    }
+
+    if (subscriptionStartsAt) {
+      const parsedStart = new Date(subscriptionStartsAt);
+      if (Number.isNaN(parsedStart.getTime())) {
+        return res.status(400).json({ error: "Invalid subscription start date" });
+      }
+      createPayload.subscriptionStartsAt = parsedStart;
+    }
+
+    if (subscriptionEndsAt) {
+      const parsedEnd = new Date(subscriptionEndsAt);
+      if (Number.isNaN(parsedEnd.getTime())) {
+        return res.status(400).json({ error: "Invalid subscription end date" });
+      }
+      createPayload.subscriptionEndsAt = parsedEnd;
+    }
+
+    const org = await Organization.create(createPayload);
 
     return res.status(201).json({ data: org, organizationUserId });
   } catch (error) {
@@ -41,6 +69,31 @@ router.post("/orgs", requireRole("admin"), async (req, res) => {
 
 router.get("/orgs", requireRole("admin"), async (req, res) => {
   try {
+    const now = new Date();
+    await Organization.updateMany(
+      {
+        $or: [
+          { subscriptionStartsAt: { $exists: false } },
+          { subscriptionStartsAt: null },
+          { subscriptionEndsAt: { $exists: false } },
+          { subscriptionEndsAt: null },
+        ],
+      },
+      {
+        $set: {
+          subscriptionStartsAt: now,
+          subscriptionEndsAt: new Date(now.getTime() + 30 * 86400000),
+        },
+      }
+    );
+
+    await Organization.updateMany(
+      {
+        subscriptionStatus: "active",
+        subscriptionEndsAt: { $lt: now },
+      },
+      { $set: { subscriptionStatus: "expired" } }
+    );
     const orgs = await Organization.find()
       .select("name slug status")
       .sort({ name: 1 })
@@ -49,6 +102,111 @@ router.get("/orgs", requireRole("admin"), async (req, res) => {
     return res.json({ data: orgs });
   } catch (error) {
     return res.status(500).json({ error: "Failed to fetch organizations" });
+  }
+});
+
+router.get("/orgs/:orgId", requireRole("admin"), async (req, res) => {
+  try {
+    const { orgId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(orgId)) {
+      return res.status(400).json({ error: "Invalid organization ID" });
+    }
+
+    const org = await Organization.findById(orgId);
+    if (!org) {
+      return res.status(404).json({ error: "Organization not found" });
+    }
+
+    return res.json({ data: org });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to fetch organization" });
+  }
+});
+
+router.put("/orgs/:orgId", requireRole("admin"), async (req, res) => {
+  try {
+    const { orgId } = req.params;
+    const {
+      name,
+      status,
+      panNumber,
+      licenseNumber,
+      location,
+      subscriptionStatus,
+      subscriptionStartsAt,
+      subscriptionEndsAt,
+    } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(orgId)) {
+      return res.status(400).json({ error: "Invalid organization ID" });
+    }
+
+    const updates = {};
+    if (typeof name === "string" && name.trim()) {
+      const nextSlug = slugify(name);
+      const existing = await Organization.findOne({
+        slug: nextSlug,
+        _id: { $ne: orgId },
+      }).select("_id");
+      if (existing) {
+        return res.status(409).json({ error: "Organization already exists" });
+      }
+      updates.name = name.trim();
+      updates.slug = nextSlug;
+    }
+
+    if (["active", "inactive"].includes(status)) {
+      updates.status = status;
+    }
+
+    if (typeof panNumber === "string") {
+      updates.panNumber = panNumber.trim();
+    }
+
+    if (typeof licenseNumber === "string") {
+      updates.licenseNumber = licenseNumber.trim();
+    }
+
+    if (typeof location === "string") {
+      updates.location = location.trim();
+    }
+
+    if (["active", "canceled", "expired"].includes(subscriptionStatus)) {
+      updates.subscriptionStatus = subscriptionStatus;
+    }
+
+    if (subscriptionStartsAt === null || subscriptionStartsAt === "") {
+      updates.subscriptionStartsAt = null;
+    } else if (subscriptionStartsAt) {
+      const parsedStart = new Date(subscriptionStartsAt);
+      if (Number.isNaN(parsedStart.getTime())) {
+        return res.status(400).json({ error: "Invalid start date" });
+      }
+      updates.subscriptionStartsAt = parsedStart;
+    }
+
+    if (subscriptionEndsAt === null || subscriptionEndsAt === "") {
+      updates.subscriptionEndsAt = null;
+    } else if (subscriptionEndsAt) {
+      const parsedEnd = new Date(subscriptionEndsAt);
+      if (Number.isNaN(parsedEnd.getTime())) {
+        return res.status(400).json({ error: "Invalid end date" });
+      }
+      updates.subscriptionEndsAt = parsedEnd;
+    }
+
+    const org = await Organization.findByIdAndUpdate(orgId, updates, {
+      new: true,
+    });
+
+    if (!org) {
+      return res.status(404).json({ error: "Organization not found" });
+    }
+
+    return res.json({ data: org });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to update organization" });
   }
 });
 

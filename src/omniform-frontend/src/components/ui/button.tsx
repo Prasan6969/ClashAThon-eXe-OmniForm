@@ -26,6 +26,14 @@ const sizes = {
   lg: "text-lg px-6 py-3",
 };
 
+export const buttonVariants = ({
+  variant = "primary",
+  size = "md",
+}: {
+  variant?: Variant;
+  size?: "sm" | "md" | "lg";
+}) => cn(base, variants[variant], sizes[size]);
+
 export const Button = ({
   variant = "primary",
   size = "md",
@@ -33,7 +41,7 @@ export const Button = ({
   ...props
 }: ButtonProps) => (
   <button
-    className={cn(base, variants[variant], sizes[size], className)}
+    className={cn(buttonVariants({ variant, size }), className)}
     {...props}
   />
 );
