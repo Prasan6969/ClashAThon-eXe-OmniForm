@@ -15,6 +15,7 @@ import { Select } from "./components/ui/select";
 import { SectionHeading } from "./components/ui/section-heading";
 import { StatusPill } from "./components/ui/status-pill";
 import {
+  baseProfileKeys,
   buildAutofillPayload,
   collectUnsavedCandidates,
   ensureProfileCustomKeys,
@@ -91,6 +92,13 @@ type OrgSubmissionSummary = {
 type OrgSubmissionDetail = Submission & {
   formId: string | { _id: string; name: string; fields?: FormField[] };
 };
+type TagDefinition = {
+  _id: string;
+  label: string;
+  tag: string;
+  type: "text" | "email" | "date" | "number" | "image" | "select";
+  options?: string[];
+};
 type Profile = {
   fullName?: string;
   workEmail?: string;
@@ -100,10 +108,10 @@ type Profile = {
   citizenshipNumber?: string;
   profilePhotoUrl?: string;
   citizenshipPhotoUrl?: string;
-  citizenshipFrontPhotoUrl?: string;
-  citizenshipBackPhotoUrl?: string;
   customFields?: Record<string, string>;
 };
+
+type ProfileImageField = `${string}PhotoUrl`;
 
 type View = "user" | "profile" | "admin" | "org";
 type AdminView = "dashboard" | "builder" | "manage-orgs" | "manage-forms";
@@ -141,6 +149,7 @@ export default function App() {
       type: string;
       label: string;
       tag: string;
+      iconName?: string;
       required: boolean;
       options: string;
     }>
@@ -150,6 +159,23 @@ export default function App() {
   );
   const [dropIndex, setDropIndex] = useState<number | null>(null);
   const [showCustomComponent, setShowCustomComponent] = useState(false);
+  const [savedCustomComponents, setSavedCustomComponents] = useState<
+    Array<{
+      id: string;
+      type: string;
+      label: string;
+      tag: string;
+      iconName: string;
+      options: string;
+      removable: boolean;
+    }>
+  >([]);
+  const [componentContextMenu, setComponentContextMenu] = useState<{
+    x: number;
+    y: number;
+    componentId: string;
+  } | null>(null);
+  const [tagTemplateId, setTagTemplateId] = useState("");
   const [customComponent, setCustomComponent] = useState({
     label: "",
     type: "text",
@@ -167,6 +193,14 @@ export default function App() {
   const [manageFormQuery, setManageFormQuery] = useState("");
   const [manageForms, setManageForms] = useState<Form[]>([]);
   const [manageFormsLoading, setManageFormsLoading] = useState(false);
+  const [adminTags, setAdminTags] = useState<TagDefinition[]>([]);
+  const [tagLabel, setTagLabel] = useState("");
+  const [tagValue, setTagValue] = useState("");
+  const [tagType, setTagType] = useState<TagDefinition["type"]>("text");
+  const [tagOptions, setTagOptions] = useState("");
+  const [tagMessage, setTagMessage] = useState("");
+  const [editingTagId, setEditingTagId] = useState("");
+  const [profileTags, setProfileTags] = useState<TagDefinition[]>([]);
   const [selectedManageOrg, setSelectedManageOrg] = useState<Organization | null>(
     null
   );
@@ -229,6 +263,12 @@ export default function App() {
     Record<string, string> | null
   >(null);
   const [uploadingImageTarget, setUploadingImageTarget] = useState("");
+  const [profileImageFileNames, setProfileImageFileNames] = useState<
+    Record<string, string>
+  >({});
+  const [formImageFileNames, setFormImageFileNames] = useState<
+    Record<string, string>
+  >({});
   const [profileDraft, setProfileDraft] = useState<Profile>({
     fullName: "",
     workEmail: "",
@@ -238,13 +278,11 @@ export default function App() {
     citizenshipNumber: "",
     profilePhotoUrl: "",
     citizenshipPhotoUrl: "",
-    citizenshipFrontPhotoUrl: "",
-    citizenshipBackPhotoUrl: "",
     customFields: {},
   });
   const [profileMessage, setProfileMessage] = useState("");
   const [view, setView] = useState<View>("user");
-  const [adminView, setAdminView] = useState<AdminView>("dashboard");
+  const [, setAdminView] = useState<AdminView>("dashboard");
   const [resolvedRole, setResolvedRole] = useState<string | null>(null);
   const [resolvedOrganizationId, setResolvedOrganizationId] = useState<string>("");
   const [hasReloaded, setHasReloaded] = useState(false);
@@ -260,6 +298,40 @@ export default function App() {
   const membershipStatus = membershipExpired
     ? "expired"
     : orgMembership?.subscriptionStatus || "unknown";
+
+  const profileNavName =
+    profileDraft.fullName ||
+    profile?.fullName ||
+    user?.fullName ||
+    user?.firstName ||
+    user?.primaryEmailAddress?.emailAddress ||
+    "Profile";
+
+  const profileNavAvatar = useMemo(() => {
+    const cleanedName = String(profileNavName || "").trim();
+    const initials = cleanedName
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part.charAt(0).toUpperCase())
+      .join("") || "PR";
+
+    const hash = cleanedName
+      .split("")
+      .reduce((acc, char, index) => acc + char.charCodeAt(0) * (index + 1), 0);
+
+    const hues = [12, 28, 44, 58, 78, 102, 126, 148, 172, 198, 222, 248, 272, 296, 318, 342];
+    const hueA = hues[hash % hues.length];
+    const hueB = hues[(hash * 7 + 3) % hues.length];
+    const angle = 120 + (hash % 120);
+    const patternDensity = 10 + (hash % 8);
+
+    return {
+      initials,
+      backgroundImage: `repeating-linear-gradient(135deg, rgba(255,255,255,0.14) 0px, rgba(255,255,255,0.14) 2px, transparent 2px, transparent ${patternDensity}px), linear-gradient(${angle}deg, hsl(${hueA} 70% 44%), hsl(${hueB} 75% 55%))`,
+    };
+  }, [profileNavName]);
+
   const filteredAdminOrgs = useMemo(() => {
     const query = manageOrgQuery.trim().toLowerCase();
     if (!query) return adminOrgs;
@@ -276,6 +348,117 @@ export default function App() {
       return name.includes(query) || description.includes(query);
     });
   }, [manageForms, manageFormQuery]);
+
+  const renderBuilderIcon = (iconName?: string, className = "h-3.5 w-3.5 text-sand-900") => {
+    if (iconName === "type") return <Type className={className} />;
+    if (iconName === "mail") return <Mail className={className} />;
+    if (iconName === "calendar") return <Calendar className={className} />;
+    if (iconName === "map-pin") return <MapPin className={className} />;
+    if (iconName === "phone") return <Phone className={className} />;
+    if (iconName === "id-card") return <IdCard className={className} />;
+    if (iconName === "image") return <Image className={className} />;
+    if (iconName === "file-text") return <FileText className={className} />;
+    if (iconName === "user") return <User className={className} />;
+    if (iconName === "shield") return <Shield className={className} />;
+    return <BadgeCheck className={className} />;
+  };
+
+  const defaultBuilderComponents = useMemo(
+    () => [
+      {
+        id: "core-full-name",
+        type: "text",
+        label: "Full name",
+        tag: "fullName",
+        iconName: "type",
+        options: "",
+        removable: false,
+      },
+      {
+        id: "core-work-email",
+        type: "email",
+        label: "Work email",
+        tag: "workEmail",
+        iconName: "mail",
+        options: "",
+        removable: false,
+      },
+      {
+        id: "core-personal-email",
+        type: "email",
+        label: "Personal email",
+        tag: "personalEmail",
+        iconName: "mail",
+        options: "",
+        removable: false,
+      },
+      {
+        id: "core-address",
+        type: "text",
+        label: "Address",
+        tag: "address",
+        iconName: "map-pin",
+        options: "",
+        removable: false,
+      },
+      {
+        id: "core-phone",
+        type: "text",
+        label: "Phone",
+        tag: "phone",
+        iconName: "phone",
+        options: "",
+        removable: false,
+      },
+      {
+        id: "core-citizenship",
+        type: "text",
+        label: "Citizenship",
+        tag: "citizenshipNumber",
+        iconName: "id-card",
+        options: "",
+        removable: false,
+      },
+    ],
+    []
+  );
+
+  const builderComponents = useMemo(
+    () => [...defaultBuilderComponents, ...savedCustomComponents],
+    [defaultBuilderComponents, savedCustomComponents]
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const cached = window.localStorage.getItem("omniform:saved-builder-components");
+      if (!cached) return;
+      const parsed = JSON.parse(cached);
+      if (!Array.isArray(parsed)) return;
+      const sanitized = parsed
+        .filter((item) => item && typeof item === "object")
+        .map((item) => ({
+          id: String(item.id || `custom-template-${Date.now()}`),
+          type: String(item.type || "text"),
+          label: String(item.label || "Custom field"),
+          tag: String(item.tag || toProfileTag(String(item.label || "customField"))),
+          iconName: String(item.iconName || "type"),
+          options: String(item.options || ""),
+          removable: true,
+        }));
+      setSavedCustomComponents(sanitized);
+    } catch (error) {
+      setSavedCustomComponents([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      "omniform:saved-builder-components",
+      JSON.stringify(savedCustomComponents)
+    );
+  }, [savedCustomComponents]);
 
   const adminFetch = async (path: string, options: RequestInit) => {
     const token = await getToken();
@@ -351,23 +534,143 @@ export default function App() {
     return uploadedUrl as string;
   };
 
+  const getFileNameFromUrl = (url?: string) => {
+    if (!url) return "";
+    try {
+      const pathname = new URL(url).pathname;
+      const name = pathname.split("/").pop() || "";
+      return decodeURIComponent(name);
+    } catch (error) {
+      const clean = String(url).split("?")[0] || "";
+      const name = clean.split("/").pop() || "";
+      return decodeURIComponent(name);
+    }
+  };
+
+  const getProfileImageValue = (
+    source: Profile,
+    key: "profilePhotoUrl"
+  ) => {
+    const direct = source[key];
+    if (direct) return direct;
+
+    const custom = source.customFields || {};
+    if (custom[key]) return custom[key];
+    return "";
+  };
+
+  const getSubmissionFieldType = (
+    submission: UserSubmissionDetail | OrgSubmissionDetail,
+    key: string
+  ) => {
+    if (!submission || typeof submission.formId === "string") return "";
+    const formFields = (
+      (submission.formId as {
+        fields?: FormField[];
+        components?: FormField[];
+      }).fields ||
+      (submission.formId as {
+        fields?: FormField[];
+        components?: FormField[];
+      }).components ||
+      []
+    ) as FormField[];
+
+    const match = formFields.find((field) => {
+      const fieldKey = field.tag || toProfileTag(field.label || "");
+      return fieldKey === key || field.id === key;
+    });
+
+    return String(match?.type || "").toLowerCase();
+  };
+
+  const isImageUrl = (value: string) => /^https?:\/\//i.test(value);
+
+  const renderSubmissionValue = (
+    submission: UserSubmissionDetail | OrgSubmissionDetail,
+    key: string,
+    rawValue: string
+  ) => {
+    const value = String(rawValue || "").trim();
+    const fieldType = getSubmissionFieldType(submission, key);
+    const isImageField =
+      fieldType === "image" || (isImageUrl(value) && /(photo|image)/i.test(key));
+
+    if (isImageField && isImageUrl(value)) {
+      return (
+        <div className="mt-2 space-y-2">
+          <img
+            src={value}
+            alt={key}
+            className="h-44 w-full rounded-xl border border-sand-200 object-cover"
+          />
+          <a
+            href={value}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs font-semibold text-sand-700 underline"
+          >
+            Open image
+          </a>
+        </div>
+      );
+    }
+
+    return <p className="mt-1 text-sm text-sand-950">{value || "—"}</p>;
+  };
+
+  const isBaseProfileKey = (key: string): key is keyof Profile =>
+    (baseProfileKeys as readonly string[]).includes(key);
+
+  const getProfileTagFieldValue = (tag: string) => {
+    if (isBaseProfileKey(tag)) {
+      return String(profileDraft[tag] || "");
+    }
+    return String(profileDraft.customFields?.[tag] || "");
+  };
+
+  const setProfileTagFieldValue = (tag: string, value: string) => {
+    if (isBaseProfileKey(tag)) {
+      setProfileDraft((prev) => ({ ...prev, [tag]: value }));
+      return;
+    }
+
+    setProfileDraft((prev) => ({
+      ...prev,
+      customFields: {
+        ...(prev.customFields || {}),
+        [tag]: value,
+      },
+    }));
+  };
+
   const handleProfileImageUpload = async (
-    field:
-      | "profilePhotoUrl"
-      | "citizenshipFrontPhotoUrl"
-      | "citizenshipBackPhotoUrl",
+    field: ProfileImageField,
     file?: File
   ) => {
     if (!file) return;
     try {
       setProfileMessage("");
       setUploadingImageTarget(field);
-      const uploadedUrl = await uploadToImageKit(file, "/omniform/profile-documents");
-      setProfileDraft((prev) => ({
+      setProfileImageFileNames((prev) => ({
         ...prev,
-        [field]: uploadedUrl,
+        [field]: file.name,
       }));
-      setProfileMessage("Image uploaded. Save profile to persist changes.");
+      const uploadedUrl = await uploadToImageKit(file, "/omniform/profile-documents");
+      const nextProfileDraft: Profile = {
+        ...profileDraft,
+        [field]: uploadedUrl,
+      };
+
+      setProfileDraft(nextProfileDraft);
+
+      const payload = await authedFetch("/api/profile/me", {
+        method: "PUT",
+        body: JSON.stringify(nextProfileDraft),
+      });
+      setProfile(payload.data || null);
+      setProfileDraft((payload.data as Profile) || nextProfileDraft);
+      setProfileMessage("Image uploaded and saved.");
     } catch (error) {
       setProfileMessage(
         error instanceof Error ? error.message : "Image upload failed."
@@ -382,6 +685,10 @@ export default function App() {
     try {
       setSubmitMessage("");
       setUploadingImageTarget(`form:${fieldKey}`);
+      setFormImageFileNames((prev) => ({
+        ...prev,
+        [fieldKey]: file.name,
+      }));
       const uploadedUrl = await uploadToImageKit(file, "/omniform/form-submissions");
       setFormValues((prev) => ({
         ...prev,
@@ -393,6 +700,122 @@ export default function App() {
       );
     } finally {
       setUploadingImageTarget("");
+    }
+  };
+
+  const handleProfileTagImageUpload = async (tag: string, file?: File) => {
+    if (!file) return;
+    try {
+      setProfileMessage("");
+      setUploadingImageTarget(`tag:${tag}`);
+      setProfileImageFileNames((prev) => ({ ...prev, [tag]: file.name }));
+      const uploadedUrl = await uploadToImageKit(file, "/omniform/profile-documents");
+
+      const nextProfileDraft: Profile = isBaseProfileKey(tag)
+        ? { ...profileDraft, [tag]: uploadedUrl }
+        : {
+            ...profileDraft,
+            customFields: {
+              ...(profileDraft.customFields || {}),
+              [tag]: uploadedUrl,
+            },
+          };
+
+      setProfileDraft(nextProfileDraft);
+
+      const payload = await authedFetch("/api/profile/me", {
+        method: "PUT",
+        body: JSON.stringify(nextProfileDraft),
+      });
+      setProfile(payload.data || null);
+      setProfileDraft((payload.data as Profile) || nextProfileDraft);
+      setProfileMessage("Image uploaded and saved.");
+    } catch (error) {
+      setProfileMessage(
+        error instanceof Error ? error.message : "Image upload failed."
+      );
+    } finally {
+      setUploadingImageTarget("");
+    }
+  };
+
+  const loadAdminTags = async () => {
+    try {
+      const payload = await adminFetch("/api/admin/tags", { method: "GET" });
+      setAdminTags(payload.data || []);
+    } catch (error) {
+      setAdminTags([]);
+    }
+  };
+
+  const handleCreateTag = async () => {
+    try {
+      setTagMessage("");
+      if (!tagLabel.trim()) {
+        setTagMessage("Tag label is required.");
+        return;
+      }
+
+      const payload = {
+        label: tagLabel,
+        tag: tagValue,
+        type: tagType,
+        options: tagOptions
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean),
+      };
+
+      if (editingTagId) {
+        await adminFetch(`/api/admin/tags/${editingTagId}`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+      } else {
+        await adminFetch("/api/admin/tags", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+      }
+
+      setTagLabel("");
+      setTagValue("");
+      setTagType("text");
+      setTagOptions("");
+      setEditingTagId("");
+      setTagMessage(editingTagId ? "Tag updated." : "Tag created.");
+      await loadAdminTags();
+    } catch (error) {
+      setTagMessage(error instanceof Error ? error.message : "Failed to create tag.");
+    }
+  };
+
+  const handleStartEditTag = (item: TagDefinition) => {
+    setEditingTagId(item._id);
+    setTagLabel(item.label);
+    setTagValue(item.tag);
+    setTagType(item.type);
+    setTagOptions((item.options || []).join(", "));
+    setTagMessage("");
+  };
+
+  const handleCancelEditTag = () => {
+    setEditingTagId("");
+    setTagLabel("");
+    setTagValue("");
+    setTagType("text");
+    setTagOptions("");
+    setTagMessage("");
+  };
+
+  const handleDeleteTag = async (tagId: string) => {
+    try {
+      setTagMessage("");
+      await adminFetch(`/api/admin/tags/${tagId}`, { method: "DELETE" });
+      setAdminTags((prev) => prev.filter((item) => item._id !== tagId));
+      setTagMessage("Tag removed.");
+    } catch (error) {
+      setTagMessage(error instanceof Error ? error.message : "Failed to remove tag.");
     }
   };
 
@@ -870,7 +1293,7 @@ export default function App() {
       const fullForm = payload.data || form;
       setActiveForm(fullForm);
       setProfileDraft((prev) => ensureProfileCustomKeys(prev, fullForm));
-      const components = fullForm.components || fullForm.fields || [];
+      const components = (fullForm.components || fullForm.fields || []) as FormField[];
       const initialValues = components.reduce<Record<string, string>>(
         (acc, field, index) => {
           const fieldKey = field.id || field.tag || `field-${index}`;
@@ -1181,10 +1604,15 @@ export default function App() {
     if (!isLoaded || !user || role !== "admin") return;
     const loadAdminOrgs = async () => {
       try {
-        const payload = await adminFetch("/api/admin/orgs", { method: "GET" });
-        setAdminOrgs(payload.data || []);
+        const [orgPayload, tagPayload] = await Promise.all([
+          adminFetch("/api/admin/orgs", { method: "GET" }),
+          adminFetch("/api/admin/tags", { method: "GET" }),
+        ]);
+        setAdminOrgs(orgPayload.data || []);
+        setAdminTags(tagPayload.data || []);
       } catch (error) {
         setAdminOrgs([]);
+        setAdminTags([]);
       }
     };
 
@@ -1195,24 +1623,37 @@ export default function App() {
     if (!isLoaded || !user || role !== "user") return;
     const load = async () => {
       try {
-        const profilePayload = await authedFetch("/api/profile/me");
+        const [profilePayload, tagPayload] = await Promise.all([
+          authedFetch("/api/profile/me"),
+          authedFetch("/api/profile/tags"),
+        ]);
+        const loadedTags = (tagPayload?.data || []) as TagDefinition[];
+        setProfileTags(loadedTags);
         setProfile(profilePayload.data || null);
+        const loadedProfile = (profilePayload?.data || {}) as Profile;
+        const customFieldDefaults = loadedTags.reduce<Record<string, string>>(
+          (acc, item) => {
+            if (!isBaseProfileKey(item.tag)) {
+              acc[item.tag] = loadedProfile.customFields?.[item.tag] || "";
+            }
+            return acc;
+          },
+          {}
+        );
+
         setProfileDraft({
-          fullName: profilePayload?.data?.fullName || "",
-          workEmail: profilePayload?.data?.workEmail || "",
-          personalEmail: profilePayload?.data?.personalEmail || "",
-          address: profilePayload?.data?.address || "",
-          phone: profilePayload?.data?.phone || "",
-          citizenshipNumber: profilePayload?.data?.citizenshipNumber || "",
-          profilePhotoUrl: profilePayload?.data?.profilePhotoUrl || "",
-          citizenshipPhotoUrl: profilePayload?.data?.citizenshipPhotoUrl || "",
-          citizenshipFrontPhotoUrl:
-            profilePayload?.data?.citizenshipFrontPhotoUrl ||
-            profilePayload?.data?.citizenshipPhotoUrl ||
-            "",
-          citizenshipBackPhotoUrl:
-            profilePayload?.data?.citizenshipBackPhotoUrl || "",
-          customFields: profilePayload?.data?.customFields || {},
+          fullName: loadedProfile.fullName || "",
+          workEmail: loadedProfile.workEmail || "",
+          personalEmail: loadedProfile.personalEmail || "",
+          address: loadedProfile.address || "",
+          phone: loadedProfile.phone || "",
+          citizenshipNumber: loadedProfile.citizenshipNumber || "",
+          profilePhotoUrl: getProfileImageValue(loadedProfile, "profilePhotoUrl"),
+          citizenshipPhotoUrl: loadedProfile.citizenshipPhotoUrl || "",
+          customFields: {
+            ...customFieldDefaults,
+            ...(loadedProfile.customFields || {}),
+          },
         });
         const hasBasics =
           profilePayload?.data?.fullName &&
@@ -1222,6 +1663,7 @@ export default function App() {
         setShowOnboarding(!hasBasics);
       } catch (error) {
         setProfile(null);
+        setProfileTags([]);
       }
 
       try {
@@ -1383,8 +1825,17 @@ export default function App() {
                       <Button
                         variant={view === "profile" ? "secondary" : "ghost"}
                         size="sm"
-                    onClick={() => navigate("/profile")}
+                        onClick={() => navigate("/profile")}
                       >
+                        <span
+                          aria-hidden="true"
+                          className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/35 text-[9px] font-bold tracking-[0.04em] text-white"
+                          style={{
+                            backgroundImage: profileNavAvatar.backgroundImage,
+                          }}
+                        >
+                          {profileNavAvatar.initials}
+                        </span>
                         Profile
                       </Button>
                     </>
@@ -1410,11 +1861,15 @@ export default function App() {
                 </>
               )}
               {isLoaded && user ? (
-                <SignOutButton>
-                  <Button variant="secondary" size="sm">
-                    Sign out
-                  </Button>
-                </SignOutButton>
+                (location.pathname === "/profile" ||
+                  (role === "admin" && location.pathname === "/admin") ||
+                  (role === "organization" && location.pathname === "/org")) ? (
+                  <SignOutButton>
+                    <Button variant="secondary" size="sm">
+                      Sign out
+                    </Button>
+                  </SignOutButton>
+                ) : null
               ) : (
                 <SignInButton>
                   <Button variant="secondary" size="sm">
@@ -1634,77 +2089,229 @@ export default function App() {
                         subtitle="Keep your data accurate for every autofill."
                       />
                       <div className="grid gap-4 sm:grid-cols-2">
-                        <Input
-                          placeholder="Full name"
-                          value={profileDraft.fullName || ""}
-                          onChange={(event) =>
-                            setProfileDraft((prev) => ({
-                              ...prev,
-                              fullName: event.target.value,
-                            }))
-                          }
-                        />
-                        <Input
-                          placeholder="Work email"
-                          value={profileDraft.workEmail || ""}
-                          onChange={(event) =>
-                            setProfileDraft((prev) => ({
-                              ...prev,
-                              workEmail: event.target.value,
-                            }))
-                          }
-                        />
-                        <Input
-                          placeholder="Personal email"
-                          value={profileDraft.personalEmail || ""}
-                          onChange={(event) =>
-                            setProfileDraft((prev) => ({
-                              ...prev,
-                              personalEmail: event.target.value,
-                            }))
-                          }
-                        />
-                        <Input
-                          placeholder="Address"
-                          value={profileDraft.address || ""}
-                          onChange={(event) =>
-                            setProfileDraft((prev) => ({
-                              ...prev,
-                              address: event.target.value,
-                            }))
-                          }
-                        />
+                        <div className="space-y-1">
+                          <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                            Full name
+                          </p>
+                          <Input
+                            value={profileDraft.fullName || ""}
+                            onChange={(event) =>
+                              setProfileDraft((prev) => ({
+                                ...prev,
+                                fullName: event.target.value,
+                              }))
+                            }
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                            Work email
+                          </p>
+                          <Input
+                            value={profileDraft.workEmail || ""}
+                            onChange={(event) =>
+                              setProfileDraft((prev) => ({
+                                ...prev,
+                                workEmail: event.target.value,
+                              }))
+                            }
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                            Personal email
+                          </p>
+                          <Input
+                            value={profileDraft.personalEmail || ""}
+                            onChange={(event) =>
+                              setProfileDraft((prev) => ({
+                                ...prev,
+                                personalEmail: event.target.value,
+                              }))
+                            }
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                            Address
+                          </p>
+                          <Input
+                            value={profileDraft.address || ""}
+                            onChange={(event) =>
+                              setProfileDraft((prev) => ({
+                                ...prev,
+                                address: event.target.value,
+                              }))
+                            }
+                          />
+                        </div>
                       </div>
                       <div className="grid gap-4 sm:grid-cols-2">
-                        <Input
-                          placeholder="Phone number"
-                          value={profileDraft.phone || ""}
-                          onChange={(event) =>
-                            setProfileDraft((prev) => ({
-                              ...prev,
-                              phone: event.target.value,
-                            }))
-                          }
-                        />
-                        <Input
-                          placeholder="Citizenship number"
-                          value={profileDraft.citizenshipNumber || ""}
-                          onChange={(event) =>
-                            setProfileDraft((prev) => ({
-                              ...prev,
-                              citizenshipNumber: event.target.value,
-                            }))
-                          }
-                        />
+                        <div className="space-y-1">
+                          <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                            Phone number
+                          </p>
+                          <Input
+                            value={profileDraft.phone || ""}
+                            onChange={(event) =>
+                              setProfileDraft((prev) => ({
+                                ...prev,
+                                phone: event.target.value,
+                              }))
+                            }
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                            Citizenship number
+                          </p>
+                          <Input
+                            value={profileDraft.citizenshipNumber || ""}
+                            onChange={(event) =>
+                              setProfileDraft((prev) => ({
+                                ...prev,
+                                citizenshipNumber: event.target.value,
+                              }))
+                            }
+                          />
+                        </div>
                       </div>
+                      {profileTags.filter((item) => !isBaseProfileKey(item.tag)).length ? (
+                        <div className="space-y-3">
+                          <p className="text-sm font-semibold text-sand-900">
+                            Additional profile fields
+                          </p>
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            {profileTags
+                              .filter((item) => !isBaseProfileKey(item.tag))
+                              .map((item) => {
+                                const value = getProfileTagFieldValue(item.tag);
+
+                                if (item.type === "image") {
+                                  return (
+                                    <label
+                                      key={item._id}
+                                      className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center sm:col-span-2"
+                                    >
+                                      <Image className="mx-auto h-5 w-5 text-sand-700" />
+                                      <p className="text-sm font-semibold text-sand-900">
+                                        {item.label}
+                                      </p>
+                                      <p className="mt-1 text-xs text-sand-500">
+                                        {value ? "Update image" : "Browse files"}
+                                      </p>
+                                      {value || profileImageFileNames[item.tag] ? (
+                                        <p className="mt-1 text-xs text-sand-500">
+                                          {profileImageFileNames[item.tag] ||
+                                            getFileNameFromUrl(value) ||
+                                            "Uploaded image"}
+                                        </p>
+                                      ) : null}
+                                      <input
+                                        className="hidden"
+                                        type="file"
+                                        accept="image/*"
+                                        onChange={(event) =>
+                                          handleProfileTagImageUpload(
+                                            item.tag,
+                                            event.target.files?.[0]
+                                          )
+                                        }
+                                      />
+                                      {value ? (
+                                        <img
+                                          src={value}
+                                          alt={item.label}
+                                          className="mx-auto mt-3 h-44 w-full max-w-md rounded-xl object-cover"
+                                        />
+                                      ) : null}
+                                      {value ? (
+                                        <span className="mt-3 inline-flex rounded-full border border-sand-300 px-3 py-1 text-xs font-semibold text-sand-700">
+                                          Change image
+                                        </span>
+                                      ) : null}
+                                      {uploadingImageTarget === `tag:${item.tag}` ? (
+                                        <p className="mt-2 text-xs text-sand-500">
+                                          Uploading image...
+                                        </p>
+                                      ) : null}
+                                    </label>
+                                  );
+                                }
+
+                                if (item.type === "select") {
+                                  return (
+                                    <div key={item._id} className="space-y-1">
+                                      <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                                        {item.label}
+                                      </p>
+                                      <Select
+                                        value={value}
+                                        onChange={(event) =>
+                                          setProfileTagFieldValue(
+                                            item.tag,
+                                            event.target.value
+                                          )
+                                        }
+                                      >
+                                        <option value="">Select {item.label}</option>
+                                        {(item.options || []).map((option) => (
+                                          <option key={option} value={option}>
+                                            {option}
+                                          </option>
+                                        ))}
+                                      </Select>
+                                    </div>
+                                  );
+                                }
+
+                                return (
+                                  <div key={item._id} className="space-y-1">
+                                    <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                                      {item.label}
+                                    </p>
+                                    <Input
+                                      type={
+                                        item.type === "number"
+                                          ? "number"
+                                          : item.type === "date"
+                                          ? "date"
+                                          : item.type === "email"
+                                          ? "email"
+                                          : "text"
+                                      }
+                                      value={value}
+                                      onChange={(event) =>
+                                        setProfileTagFieldValue(
+                                          item.tag,
+                                          event.target.value
+                                        )
+                                      }
+                                    />
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        </div>
+                      ) : null}
                       <div className="space-y-4">
                         <label className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
+                          <Image className="mx-auto h-5 w-5 text-sand-700" />
                           <p className="text-sm font-semibold text-sand-900">Profile photo</p>
                           <p className="mt-1 text-xs text-sand-500">
-                            {profileDraft.profilePhotoUrl
+                            {getProfileImageValue(profileDraft, "profilePhotoUrl")
                               ? "Update image"
                               : "Browse files"}
                           </p>
+                          {getProfileImageValue(profileDraft, "profilePhotoUrl") || profileImageFileNames.profilePhotoUrl ? (
+                            <p className="mt-1 text-xs text-sand-500">
+                              {profileImageFileNames.profilePhotoUrl ||
+                                getFileNameFromUrl(
+                                  getProfileImageValue(profileDraft, "profilePhotoUrl")
+                                ) ||
+                                "Uploaded image"}
+                            </p>
+                          ) : null}
                           <input
                             className="hidden"
                             type="file"
@@ -1716,81 +2323,23 @@ export default function App() {
                               )
                             }
                           />
-                          {profileDraft.profilePhotoUrl ? (
+                          {getProfileImageValue(profileDraft, "profilePhotoUrl") ? (
                             <img
-                              src={profileDraft.profilePhotoUrl}
+                              src={getProfileImageValue(profileDraft, "profilePhotoUrl")}
                               alt="Profile"
                               className="mx-auto mt-3 h-44 w-full max-w-md rounded-xl object-cover"
                             />
+                          ) : null}
+                          {getProfileImageValue(profileDraft, "profilePhotoUrl") ? (
+                            <span className="mt-3 inline-flex rounded-full border border-sand-300 px-3 py-1 text-xs font-semibold text-sand-700">
+                              Change image
+                            </span>
                           ) : null}
                         </label>
                         {uploadingImageTarget === "profilePhotoUrl" ? (
                           <p className="text-xs text-sand-500">Uploading profile image...</p>
                         ) : null}
 
-                        <label className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
-                          <p className="text-sm font-semibold text-sand-900">
-                            Citizenship front photo
-                          </p>
-                          <p className="mt-1 text-xs text-sand-500">
-                            {profileDraft.citizenshipFrontPhotoUrl
-                              ? "Update image"
-                              : "Browse files"}
-                          </p>
-                          <input
-                            className="hidden"
-                            type="file"
-                            accept="image/*"
-                            onChange={(event) =>
-                              handleProfileImageUpload(
-                                "citizenshipFrontPhotoUrl",
-                                event.target.files?.[0]
-                              )
-                            }
-                          />
-                          {profileDraft.citizenshipFrontPhotoUrl ? (
-                            <img
-                              src={profileDraft.citizenshipFrontPhotoUrl}
-                              alt="Citizenship front"
-                              className="mx-auto mt-3 h-44 w-full max-w-md rounded-xl object-cover"
-                            />
-                          ) : null}
-                        </label>
-                        {uploadingImageTarget === "citizenshipFrontPhotoUrl" ? (
-                          <p className="text-xs text-sand-500">Uploading front image...</p>
-                        ) : null}
-
-                        <label className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
-                          <p className="text-sm font-semibold text-sand-900">
-                            Citizenship back photo
-                          </p>
-                          <p className="mt-1 text-xs text-sand-500">
-                            {profileDraft.citizenshipBackPhotoUrl
-                              ? "Update image"
-                              : "Browse files"}
-                          </p>
-                          <input
-                            className="hidden"
-                            type="file"
-                            accept="image/*"
-                            onChange={(event) =>
-                              handleProfileImageUpload(
-                                "citizenshipBackPhotoUrl",
-                                event.target.files?.[0]
-                              )
-                            }
-                          />
-                          {profileDraft.citizenshipBackPhotoUrl ? (
-                            <img
-                              src={profileDraft.citizenshipBackPhotoUrl}
-                              alt="Citizenship back"
-                              className="mx-auto mt-3 h-44 w-full max-w-md rounded-xl object-cover"
-                            />
-                          ) : null}
-                        </label>
-                        {uploadingImageTarget === "citizenshipBackPhotoUrl" ? (
-                          <p className="text-xs text-sand-500">Uploading back image...</p>
-                        ) : null}
                       </div>
                       <div className="flex flex-col gap-3 sm:flex-row">
                         <Button onClick={handleProfileSave}>Save profile</Button>
@@ -1896,8 +2445,18 @@ export default function App() {
                           </div>
                           <div className="space-y-4">
                           <label className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
+                            <Image className="mx-auto h-5 w-5 text-sand-700" />
                             <p className="text-sm font-semibold text-sand-900">Profile photo</p>
-                            <p className="mt-1 text-xs text-sand-500">Browse files</p>
+                            <p className="mt-1 text-xs text-sand-500">
+                              {profileDraft.profilePhotoUrl ? "Update image" : "Browse files"}
+                            </p>
+                            {profileDraft.profilePhotoUrl || profileImageFileNames.profilePhotoUrl ? (
+                              <p className="mt-1 text-xs text-sand-500">
+                                {profileImageFileNames.profilePhotoUrl ||
+                                  getFileNameFromUrl(profileDraft.profilePhotoUrl) ||
+                                  "Uploaded image"}
+                              </p>
+                            ) : null}
                             <input
                               className="hidden"
                               type="file"
@@ -1909,40 +2468,11 @@ export default function App() {
                                 )
                               }
                             />
-                          </label>
-                          <label className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
-                            <p className="text-sm font-semibold text-sand-900">
-                              Citizenship front photo
-                            </p>
-                            <p className="mt-1 text-xs text-sand-500">Browse files</p>
-                            <input
-                              className="hidden"
-                              type="file"
-                              accept="image/*"
-                              onChange={(event) =>
-                                handleProfileImageUpload(
-                                  "citizenshipFrontPhotoUrl",
-                                  event.target.files?.[0]
-                                )
-                              }
-                            />
-                          </label>
-                          <label className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
-                            <p className="text-sm font-semibold text-sand-900">
-                              Citizenship back photo
-                            </p>
-                            <p className="mt-1 text-xs text-sand-500">Browse files</p>
-                            <input
-                              className="hidden"
-                              type="file"
-                              accept="image/*"
-                              onChange={(event) =>
-                                handleProfileImageUpload(
-                                  "citizenshipBackPhotoUrl",
-                                  event.target.files?.[0]
-                                )
-                              }
-                            />
+                            {profileDraft.profilePhotoUrl ? (
+                              <span className="mt-3 inline-flex rounded-full border border-sand-300 px-3 py-1 text-xs font-semibold text-sand-700">
+                                Change image
+                              </span>
+                            ) : null}
                           </label>
                           </div>
                         </>
@@ -2013,14 +2543,22 @@ export default function App() {
                                     {field.type === "image" ? (
                                       <>
                                         <label className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
+                                          <Image className="mx-auto h-5 w-5 text-sand-700" />
                                           <p className="text-sm font-semibold text-sand-900">
                                             {field.required
                                               ? `${field.label} *`
                                               : field.label}
                                           </p>
                                           <p className="mt-1 text-xs text-sand-500">
-                                            Browse files
+                                            {value ? "Update image" : "Browse files"}
                                           </p>
+                                          {value || formImageFileNames[fieldKey] ? (
+                                            <p className="mt-1 text-xs text-sand-500">
+                                              {formImageFileNames[fieldKey] ||
+                                                getFileNameFromUrl(value) ||
+                                                "Uploaded image"}
+                                            </p>
+                                          ) : null}
                                           <input
                                             className="hidden"
                                             type="file"
@@ -2039,6 +2577,11 @@ export default function App() {
                                               className="mx-auto mt-3 h-24 rounded-xl object-cover"
                                             />
                                           ) : null}
+                                          {value ? (
+                                            <span className="mt-3 inline-flex rounded-full border border-sand-300 px-3 py-1 text-xs font-semibold text-sand-700">
+                                              Change image
+                                            </span>
+                                          ) : null}
                                         </label>
                                         {uploadingImageTarget === `form:${fieldKey}` ? (
                                           <p className="text-xs text-sand-500">
@@ -2048,6 +2591,15 @@ export default function App() {
                                       </>
                                     ) : (
                                       <Input
+                                        type={
+                                          field.type === "number"
+                                            ? "number"
+                                            : field.type === "date"
+                                            ? "date"
+                                            : field.type === "email"
+                                            ? "email"
+                                            : "text"
+                                        }
                                         placeholder={
                                           field.required
                                             ? `${field.label} *`
@@ -2228,9 +2780,11 @@ export default function App() {
                                     <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
                                       {key}
                                     </p>
-                                    <p className="mt-1 text-sm text-sand-950">
-                                      {value || "—"}
-                                    </p>
+                                    {renderSubmissionValue(
+                                      selectedUserSubmission,
+                                      key,
+                                      String(value || "")
+                                    )}
                                   </div>
                                 )
                               )}
@@ -2282,13 +2836,6 @@ export default function App() {
                         subtitle="Register organizations and assign org accounts."
                       />
                       <div className="space-y-3">
-                        <p className="text-sm text-sand-500">
-                          Roles must be exactly: admin, user, or organization.
-                        </p>
-                        <p className="text-sm text-sand-500">
-                          Paste Clerk user IDs (example: user_abc123). Organization
-                          users are assigned to an org ID after creation.
-                        </p>
                         <Input
                           placeholder="Organization name"
                           value={orgName}
@@ -2340,9 +2887,6 @@ export default function App() {
                         subtitle="Promote users or link org accounts."
                       />
                       <div className="space-y-3">
-                        <p className="text-sm text-sand-500">
-                          Find user IDs in Clerk Dashboard → Users (format: user_...).
-                        </p>
                         <Input
                           placeholder="User email"
                           value={roleUserEmail}
@@ -2374,6 +2918,16 @@ export default function App() {
                           <p className="text-sm text-sand-500">{roleMessage}</p>
                         ) : null}
                       </div>
+                    </Card>
+                    <Card className="space-y-5">
+                      <SectionHeading
+                        title="Profile tags"
+                        subtitle="Manage reusable labels, keys, and input types."
+                      />
+                      <p className="text-sm text-sand-500">
+                        Add, edit, or remove tags used in forms and user profiles.
+                      </p>
+                      <Button onClick={() => navigate("/admin/tags")}>Manage tags</Button>
                     </Card>
                     <Card className="space-y-5">
                       <SectionHeading
@@ -2457,6 +3011,123 @@ export default function App() {
                             No organizations match that search.
                           </p>
                         ) : null}
+                      </div>
+                    </Card>
+                  </section>
+                ) : null
+              }
+            />
+            <Route
+              path="/admin/tags"
+              element={
+                role === "admin" ? (
+                  <section className="mx-auto mt-6 max-w-6xl">
+                    <Card className="space-y-6">
+                      <div className="flex flex-wrap items-center justify-between gap-4">
+                        <SectionHeading
+                          title="Manage tags"
+                          subtitle="Configure label, key, input type, and options for reusable profile fields."
+                        />
+                        <Button variant="ghost" onClick={() => navigate("/admin")}>
+                          Back to dashboard
+                        </Button>
+                      </div>
+                      <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
+                        <Card className="space-y-4 border border-sand-200 bg-sand-50/50">
+                          <SectionHeading
+                            title={editingTagId ? "Edit tag" : "Create tag"}
+                            subtitle="These tags power form mapping and profile inputs."
+                          />
+                          <Input
+                            placeholder="Label (e.g., Citizenship Front)"
+                            value={tagLabel}
+                            onChange={(event) => setTagLabel(event.target.value)}
+                          />
+                          <Input
+                            placeholder="Tag key (optional, auto-generated if empty)"
+                            value={tagValue}
+                            onChange={(event) => setTagValue(event.target.value)}
+                          />
+                          <div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
+                            <Select
+                              value={tagType}
+                              onChange={(event) =>
+                                setTagType(event.target.value as TagDefinition["type"])
+                              }
+                            >
+                              <option value="text">text</option>
+                              <option value="email">email</option>
+                              <option value="date">date</option>
+                              <option value="number">number</option>
+                              <option value="image">image</option>
+                              <option value="select">select</option>
+                            </Select>
+                            <Input
+                              placeholder="Select options (comma separated)"
+                              value={tagOptions}
+                              onChange={(event) => setTagOptions(event.target.value)}
+                              disabled={tagType !== "select"}
+                            />
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Button variant="secondary" onClick={handleCreateTag}>
+                              {editingTagId ? "Save changes" : "Create tag"}
+                            </Button>
+                            {editingTagId ? (
+                              <Button variant="ghost" onClick={handleCancelEditTag}>
+                                Cancel edit
+                              </Button>
+                            ) : null}
+                          </div>
+                          {tagMessage ? (
+                            <p className="text-sm text-sand-500">{tagMessage}</p>
+                          ) : null}
+                        </Card>
+
+                        <Card className="space-y-4 border border-sand-200 bg-sand-50/50">
+                          <SectionHeading
+                            title="Existing tags"
+                            subtitle="Use edit to update labels/types or remove to delete." 
+                          />
+                          <div className="max-h-[28rem] space-y-2 overflow-y-auto pr-1">
+                            {adminTags.map((item) => (
+                              <div
+                                key={item._id}
+                                className="flex items-center justify-between gap-3 rounded-2xl border border-sand-200 bg-white px-3 py-2"
+                              >
+                                <div>
+                                  <p className="text-sm font-semibold text-sand-900">
+                                    {item.label}
+                                  </p>
+                                  <p className="text-xs text-sand-500">
+                                    {item.tag} · {item.type}
+                                  </p>
+                                </div>
+                                <div className="flex gap-2">
+                                  <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    onClick={() => handleStartEditTag(item)}
+                                  >
+                                    Edit
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => handleDeleteTag(item._id)}
+                                  >
+                                    Remove
+                                  </Button>
+                                </div>
+                              </div>
+                            ))}
+                            {!adminTags.length ? (
+                              <p className="text-sm text-sand-500">
+                                No tags created yet.
+                              </p>
+                            ) : null}
+                          </div>
+                        </Card>
                       </div>
                     </Card>
                   </section>
@@ -2632,7 +3303,10 @@ export default function App() {
               path="/admin/builder"
               element={
                 role === "admin" ? (
-                  <section className="mx-auto mt-6 min-h-[70vh] max-w-6xl">
+                  <section
+                    className="mx-auto mt-6 min-h-[70vh] max-w-6xl"
+                    onClick={() => setComponentContextMenu(null)}
+                  >
                     <div className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-sand-200 bg-white px-4 py-3">
                       <div className="flex flex-wrap items-center gap-3">
                         <Button variant="ghost" onClick={handleLeaveBuilder}>
@@ -2686,50 +3360,7 @@ export default function App() {
                               component
                             </span>
                           </div>
-                          {[
-                            {
-                              type: "text",
-                              label: "Full name",
-                              tag: "fullName",
-                              icon: Type,
-                              iconName: "type",
-                            },
-                            {
-                              type: "email",
-                              label: "Work email",
-                              tag: "workEmail",
-                              icon: Mail,
-                              iconName: "mail",
-                            },
-                            {
-                              type: "email",
-                              label: "Personal email",
-                              tag: "personalEmail",
-                              icon: Mail,
-                              iconName: "mail",
-                            },
-                            {
-                              type: "text",
-                              label: "Address",
-                              tag: "address",
-                              icon: MapPin,
-                              iconName: "map-pin",
-                            },
-                            {
-                              type: "text",
-                              label: "Phone",
-                              tag: "phone",
-                              icon: Phone,
-                              iconName: "phone",
-                            },
-                            {
-                              type: "text",
-                              label: "Citizenship",
-                              tag: "citizenshipNumber",
-                              icon: IdCard,
-                              iconName: "id-card",
-                            },
-                          ]
+                          {builderComponents
                             .filter((component) => {
                               const query = componentSearch.trim().toLowerCase();
                               if (!query) return true;
@@ -2750,7 +3381,7 @@ export default function App() {
                             })
                             .map((component) => (
                               <div
-                                key={component.label}
+                                key={component.id}
                                 draggable
                                   onClick={() => {
                                     setFormComponents((prev) => [
@@ -2762,11 +3393,20 @@ export default function App() {
                                         tag: component.tag || toProfileTag(component.label),
                                         iconName: component.iconName,
                                         required: false,
-                                        options: "",
+                                        options: component.options || "",
                                       },
                                     ]);
                                     setFormDraftTouchedAt(Date.now());
                                   }}
+                                onContextMenu={(event) => {
+                                  if (!component.removable) return;
+                                  event.preventDefault();
+                                  setComponentContextMenu({
+                                    x: event.clientX,
+                                    y: event.clientY,
+                                    componentId: component.id,
+                                  });
+                                }}
                                 onDragStart={(event) => {
                                   event.dataTransfer.setData(
                                     "component",
@@ -2775,7 +3415,7 @@ export default function App() {
                                 }}
                                 className="flex aspect-square cursor-grab flex-col items-center justify-center gap-1 rounded-xl border border-sand-200 bg-white p-2 text-center text-[10px] text-sand-700"
                               >
-                                <component.icon className="h-3.5 w-3.5 text-sand-900" />
+                                {renderBuilderIcon(component.iconName)}
                                 <span className="text-[9px] uppercase tracking-[0.2em]">
                                   {component.label}
                                 </span>
@@ -2798,6 +3438,7 @@ export default function App() {
                               label: string;
                               tag?: string;
                               iconName?: string;
+                              options?: string;
                             };
                             setFormComponents((prev) => {
                               const nextItem = {
@@ -2807,7 +3448,7 @@ export default function App() {
                                 tag: component.tag || toProfileTag(component.label),
                                 iconName: component.iconName,
                                 required: false,
-                                options: "",
+                                options: component.options || "",
                               };
                               const updated = [...prev];
                               updated.splice(insertAt, 0, nextItem);
@@ -2999,6 +3640,7 @@ export default function App() {
                                     <option value="text">text</option>
                                     <option value="email">email</option>
                                     <option value="date">date</option>
+                                    <option value="number">number</option>
                                     <option value="select">select</option>
                                     <option value="image">image</option>
                                   </Select>
@@ -3214,10 +3856,6 @@ export default function App() {
                           </Badge>
                         </div>
                       </Card>
-                      <p className="text-sm text-sand-500">
-                        Your organization ID is pulled from Clerk metadata. Use
-                        filters to focus on a specific form.
-                      </p>
                       <div className="grid gap-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
                         <Select
                           value={orgFormFilter}
@@ -3389,9 +4027,11 @@ export default function App() {
                                     <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
                                       {key}
                                     </p>
-                                    <p className="mt-1 text-sm text-sand-950">
-                                      {value || "—"}
-                                    </p>
+                                    {renderSubmissionValue(
+                                      selectedOrgSubmission,
+                                      key,
+                                      String(value || "")
+                                    )}
                                   </div>
                                 )
                               )}
@@ -3620,6 +4260,32 @@ export default function App() {
                 </button>
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <Select
+                  value={tagTemplateId}
+                  onChange={(event) => {
+                    const nextTemplateId = event.target.value;
+                    setTagTemplateId(nextTemplateId);
+                    const selectedTemplate = adminTags.find(
+                      (item) => item._id === nextTemplateId
+                    );
+                    if (!selectedTemplate) return;
+                    setCustomComponent((prev) => ({
+                      ...prev,
+                      label: selectedTemplate.label,
+                      tag: selectedTemplate.tag,
+                      type: selectedTemplate.type,
+                      options: (selectedTemplate.options || []).join(", "),
+                    }));
+                  }}
+                  className="sm:col-span-2"
+                >
+                  <option value="">Use saved tag template (optional)</option>
+                  {adminTags.map((item) => (
+                    <option key={item._id} value={item._id}>
+                      {item.label} ({item.tag})
+                    </option>
+                  ))}
+                </Select>
                 <Input
                   placeholder="Label"
                   value={customComponent.label}
@@ -3652,6 +4318,7 @@ export default function App() {
                   <option value="text">text</option>
                   <option value="email">email</option>
                   <option value="date">date</option>
+                  <option value="number">number</option>
                   <option value="select">select</option>
                   <option value="image">image</option>
                 </Select>
@@ -3708,20 +4375,39 @@ export default function App() {
                 <Button
                   onClick={() => {
                     if (!customComponent.label.trim()) return;
+                    const nextTag =
+                      customComponent.tag || toProfileTag(customComponent.label);
                     setFormComponents((prev) => [
                       ...prev,
                       {
                         id: `custom-${Date.now()}`,
                         type: customComponent.type,
                         label: customComponent.label,
-                        tag:
-                          customComponent.tag ||
-                          toProfileTag(customComponent.label),
+                        tag: nextTag,
                         iconName: customComponent.iconName,
                         required: customComponent.required,
                         options: customComponent.options,
                       },
                     ]);
+                    const shouldSaveForFuture = window.confirm(
+                      "Save this component to the reusable component list for future use?"
+                    );
+                    if (shouldSaveForFuture) {
+                      const templateId = `custom-template-${Date.now()}`;
+                      setSavedCustomComponents((prev) => [
+                        ...prev,
+                        {
+                          id: templateId,
+                          type: customComponent.type,
+                          label: customComponent.label,
+                          tag: nextTag,
+                          iconName: customComponent.iconName,
+                          options: customComponent.options,
+                          removable: true,
+                        },
+                      ]);
+                    }
+                    setFormDraftTouchedAt(Date.now());
                     setCustomComponent({
                       label: "",
                       type: "text",
@@ -3730,6 +4416,7 @@ export default function App() {
                       required: false,
                       options: "",
                     });
+                    setTagTemplateId("");
                     setShowCustomComponent(false);
                   }}
                 >
@@ -3737,12 +4424,39 @@ export default function App() {
                 </Button>
                 <Button
                   variant="ghost"
-                  onClick={() => setShowCustomComponent(false)}
+                  onClick={() => {
+                    setTagTemplateId("");
+                    setShowCustomComponent(false);
+                  }}
                 >
                   Cancel
                 </Button>
               </div>
             </div>
+          </div>
+        ) : null}
+
+        {componentContextMenu ? (
+          <div
+            className="fixed z-50 min-w-[160px] rounded-xl border border-sand-200 bg-white p-1 shadow-lg"
+            style={{
+              left: componentContextMenu.x,
+              top: componentContextMenu.y,
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="w-full rounded-lg px-3 py-2 text-left text-sm text-rose-700 hover:bg-rose-50"
+              onClick={() => {
+                setSavedCustomComponents((prev) =>
+                  prev.filter((item) => item.id !== componentContextMenu.componentId)
+                );
+                setComponentContextMenu(null);
+              }}
+            >
+              Delete component
+            </button>
           </div>
         ) : null}
 

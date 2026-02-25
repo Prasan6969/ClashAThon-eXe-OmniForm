@@ -2,11 +2,13 @@ const express = require("express");
 const { clerkClient } = require("@clerk/express");
 const Organization = require("../models/Organization");
 const Form = require("../models/Form");
+const ProfileTag = require("../models/ProfileTag");
 const { requireRole } = require("../middleware/auth");
 const {
   isValidObjectId,
   parseDateValue,
   sanitizeFormComponents,
+  sanitizeKey,
   sanitizeString,
 } = require("../utils/validation");
 
@@ -18,6 +20,42 @@ const slugify = (value) =>
     .trim()
     .replace(/[^a-z0-9\s-]/g, "")
     .replace(/\s+/g, "-");
+
+const TAG_TYPES = ["text", "email", "date", "number", "image", "select"];
+
+const normalizeTagPayload = (payload = {}) => {
+  const label = sanitizeString(payload.label, 120);
+  const tag = sanitizeKey(payload.tag || label, 80);
+  const type = sanitizeString(payload.type || "text", 40).toLowerCase();
+  const options = Array.isArray(payload.options)
+    ? payload.options
+        .map((option) => sanitizeString(option, 120))
+        .filter(Boolean)
+        .slice(0, 50)
+    : [];
+
+  if (!label) {
+    return { ok: false, error: "Tag label is required" };
+  }
+
+  if (!tag) {
+    return { ok: false, error: "Tag key is required" };
+  }
+
+  if (!TAG_TYPES.includes(type)) {
+    return { ok: false, error: "Invalid tag input type" };
+  }
+
+  return {
+    ok: true,
+    value: {
+      label,
+      tag,
+      type,
+      options: type === "select" ? options : [],
+    },
+  };
+};
 
 router.post("/orgs", requireRole("admin"), async (req, res) => {
   try {
@@ -332,6 +370,96 @@ router.get(
     });
   }
 );
+
+router.get("/tags", requireRole("admin"), async (req, res) => {
+  try {
+    const tags = await ProfileTag.find({ isActive: true })
+      .select("label tag type options isActive")
+      .sort({ label: 1 })
+      .limit(500);
+
+    return res.json({ data: tags });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to fetch tags" });
+  }
+});
+
+router.post("/tags", requireRole("admin"), async (req, res) => {
+  try {
+    const normalized = normalizeTagPayload(req.body);
+    if (!normalized.ok) {
+      return res.status(400).json({ error: normalized.error });
+    }
+
+    const existing = await ProfileTag.findOne({ tag: normalized.value.tag }).select(
+      "_id"
+    );
+    if (existing) {
+      return res.status(409).json({ error: "Tag already exists" });
+    }
+
+    const created = await ProfileTag.create({
+      ...normalized.value,
+      createdBy: req.auth.userId,
+      isActive: true,
+    });
+
+    return res.status(201).json({ data: created });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to create tag" });
+  }
+});
+
+router.put("/tags/:tagId", requireRole("admin"), async (req, res) => {
+  try {
+    const { tagId } = req.params;
+    if (!isValidObjectId(tagId)) {
+      return res.status(400).json({ error: "Invalid tag ID" });
+    }
+
+    const normalized = normalizeTagPayload(req.body);
+    if (!normalized.ok) {
+      return res.status(400).json({ error: normalized.error });
+    }
+
+    const conflict = await ProfileTag.findOne({
+      tag: normalized.value.tag,
+      _id: { $ne: tagId },
+    }).select("_id");
+    if (conflict) {
+      return res.status(409).json({ error: "Tag already exists" });
+    }
+
+    const updated = await ProfileTag.findByIdAndUpdate(tagId, normalized.value, {
+      new: true,
+    });
+    if (!updated) {
+      return res.status(404).json({ error: "Tag not found" });
+    }
+
+    return res.json({ data: updated });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to update tag" });
+  }
+});
+
+router.delete("/tags/:tagId", requireRole("admin"), async (req, res) => {
+  try {
+    const { tagId } = req.params;
+    if (!isValidObjectId(tagId)) {
+      return res.status(400).json({ error: "Invalid tag ID" });
+    }
+
+    const deleted = await ProfileTag.findByIdAndDelete(tagId);
+    if (!deleted) {
+      return res.status(404).json({ error: "Tag not found" });
+    }
+
+    return res.json({ data: { _id: tagId } });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to delete tag" });
+  }
+});
 
 router.post("/orgs/:orgId/forms", requireRole("admin"), async (req, res) => {
   try {

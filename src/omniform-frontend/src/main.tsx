@@ -10,7 +10,7 @@ const container = document.querySelector<HTMLDivElement>("#app");
 if (container) {
   if (!publishableKey) {
     createRoot(container).render(
-      <div style={{ padding: "2rem", fontFamily: "Space Grotesk, sans-serif" }}>
+      <div style={{ padding: "2rem", fontFamily: "Outfit, sans-serif" }}>
         <h1 style={{ marginBottom: "0.5rem" }}>Missing Clerk key</h1>
         <p>
           Set <code>VITE_CLERK_PUBLISHABLE_KEY</code> in

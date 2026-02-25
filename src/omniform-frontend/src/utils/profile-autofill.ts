@@ -20,8 +20,6 @@ type ProfileShape = {
   citizenshipNumber?: string;
   profilePhotoUrl?: string;
   citizenshipPhotoUrl?: string;
-  citizenshipFrontPhotoUrl?: string;
-  citizenshipBackPhotoUrl?: string;
   customFields?: Record<string, string>;
 };
 
@@ -34,8 +32,6 @@ export const baseProfileKeys = [
   "citizenshipNumber",
   "profilePhotoUrl",
   "citizenshipPhotoUrl",
-  "citizenshipFrontPhotoUrl",
-  "citizenshipBackPhotoUrl",
 ] as const;
 
 type BaseProfileKey = (typeof baseProfileKeys)[number];
@@ -55,20 +51,6 @@ const aliases: Record<string, string[]> = {
   citizenshipNumber: ["citizenship", "idnumber", "nationalid"],
   profilePhotoUrl: ["profilephoto", "avatar", "profileimage"],
   citizenshipPhotoUrl: ["citizenshipphoto", "idphoto", "documentphoto"],
-  citizenshipFrontPhotoUrl: [
-    "citizenshipfront",
-    "citizenshipfrontphoto",
-    "idfront",
-    "frontid",
-    "documentfront",
-  ],
-  citizenshipBackPhotoUrl: [
-    "citizenshipback",
-    "citizenshipbackphoto",
-    "idback",
-    "backid",
-    "documentback",
-  ],
 };
 
 export const normalizeKey = (value: string) =>

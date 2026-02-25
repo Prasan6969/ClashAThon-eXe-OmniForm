@@ -11,8 +11,6 @@ const UserProfileSchema = new mongoose.Schema(
     citizenshipNumber: { type: String, trim: true },
     profilePhotoUrl: { type: String, trim: true },
     citizenshipPhotoUrl: { type: String, trim: true },
-    citizenshipFrontPhotoUrl: { type: String, trim: true },
-    citizenshipBackPhotoUrl: { type: String, trim: true },
     customFields: {
       type: Map,
       of: String,

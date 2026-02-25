@@ -1,6 +1,9 @@
+@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&family=Plus+Jakarta+Sans:wght@200..800&display=swap");
 @import "tailwindcss";
 
 @theme {
+  --font-primary: "Outfit", system-ui, sans-serif;
+  --font-secondary: "Plus Jakarta Sans", system-ui, sans-serif;
   --color-sand-50: #f7f7f7;
   --color-sand-100: #f2f2f2;
   --color-sand-200: #e5e5e5;
@@ -27,7 +30,7 @@
 
 @layer base {
   :root {
-    font-family: "Space Grotesk", "IBM Plex Sans", system-ui, sans-serif;
+    font-family: var(--font-primary);
     line-height: 1.5;
     font-weight: 400;
     font-synthesis: none;
@@ -62,5 +65,15 @@
 
   #app {
     min-height: 100vh;
+  }
+}
+
+@layer utilities {
+  .font-primary {
+    font-family: var(--font-primary);
+  }
+
+  .font-secondary {
+    font-family: var(--font-secondary);
   }
 }

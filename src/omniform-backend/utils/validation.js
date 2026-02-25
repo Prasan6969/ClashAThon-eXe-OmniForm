@@ -9,8 +9,6 @@ const PROFILE_KEYS = [
   "citizenshipNumber",
   "profilePhotoUrl",
   "citizenshipPhotoUrl",
-  "citizenshipFrontPhotoUrl",
-  "citizenshipBackPhotoUrl",
 ];
 
 const isValidObjectId = (value) =>
@@ -48,7 +46,14 @@ const sanitizeFormComponents = (components) => {
     return { ok: false, error: "components must be an array" };
   }
 
-  const allowedTypes = new Set(["text", "email", "date", "select", "image"]);
+  const allowedTypes = new Set([
+    "text",
+    "email",
+    "date",
+    "number",
+    "select",
+    "image",
+  ]);
 
   const sanitized = components.map((component, index) => {
     const raw = component && typeof component === "object" ? component : {};

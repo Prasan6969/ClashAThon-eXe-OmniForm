@@ -1,5 +1,6 @@
 const express = require("express");
 const UserProfile = require("../models/UserProfile");
+const ProfileTag = require("../models/ProfileTag");
 const { requireRole } = require("../middleware/auth");
 const { sanitizeProfilePayload } = require("../utils/validation");
 
@@ -11,6 +12,19 @@ router.get("/me", requireRole("user"), async (req, res) => {
     return res.json({ data: profile || null });
   } catch (error) {
     return res.status(500).json({ error: "Failed to fetch profile" });
+  }
+});
+
+router.get("/tags", requireRole("user"), async (req, res) => {
+  try {
+    const tags = await ProfileTag.find({ isActive: true })
+      .select("label tag type options")
+      .sort({ label: 1 })
+      .limit(500);
+
+    return res.json({ data: tags });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to fetch profile tags" });
   }
 });
 
