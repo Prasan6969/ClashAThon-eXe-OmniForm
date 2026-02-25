@@ -6,14 +6,16 @@ import {
 } from "@clerk/clerk-react";
 import { useEffect, useMemo, useState } from "react";
 import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { Badge } from "./components/ui/badge";
+import { Home, Search, User } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { Card } from "./components/ui/card";
-import { Input } from "./components/ui/input";
-import { ComboBox } from "./components/ui/combobox";
-import { Select } from "./components/ui/select";
-import { SectionHeading } from "./components/ui/section-heading";
-import { StatusPill } from "./components/ui/status-pill";
+import { LandingPage } from "./components/layout/LandingPage";
+import { FormSaveModal } from "./components/modals/FormSaveModal";
+import { CooldownPromptModal } from "./components/modals/CooldownPromptModal";
+import { SavePromptModal } from "./components/modals/SavePromptModal";
+import { CustomComponentModal } from "./components/modals/CustomComponentModal";
+import { SaveReusableComponentModal } from "./components/modals/SaveReusableComponentModal";
+import { ComponentContextMenu } from "./components/menus/ComponentContextMenu";
 import {
   baseProfileKeys,
   buildAutofillPayload,
@@ -25,97 +27,39 @@ import {
 } from "./utils/profile-autofill";
 import type { SaveCandidate } from "./utils/profile-autofill";
 import {
-  BadgeCheck,
-  Calendar,
-  FileText,
-  IdCard,
-  Image,
-  Mail,
-  MapPin,
-  Phone,
-  Plus,
-  Shield,
-  Type,
-  User,
-  X,
-} from "lucide-react";
-
-type Organization = {
-  _id: string;
-  name: string;
-  slug: string;
-  status: string;
-  panNumber?: string;
-  licenseNumber?: string;
-  location?: string;
-  subscriptionStatus?: string;
-  subscriptionStartsAt?: string;
-  subscriptionEndsAt?: string;
-};
-type FormField = {
-  id: string;
-  label: string;
-  type: string;
-  tag?: string;
-  iconName?: string;
-  required?: boolean;
-  options?: string[];
-};
-type Form = {
-  _id: string;
-  name: string;
-  description?: string;
-  organizationId?: string;
-  components?: FormField[];
-  fields?: FormField[];
-};
-type Submission = {
-  _id: string;
-  formId:
-    | string
-    | { _id: string; name: string; fields?: FormField[] };
-  status: "pending" | "completed" | "rejected" | "canceled";
-  createdAt: string;
-  data?: Record<string, string>;
-  reviewNotes?: string;
-  cooldownUntil?: string;
-};
-type UserSubmissionDetail = Submission & {
-  formId: string | { _id: string; name: string; fields?: FormField[] };
-};
-type OrgSubmissionSummary = {
-  _id: string;
-  formId: string | { _id: string; name: string };
-  status: "pending" | "completed" | "rejected" | "canceled";
-  createdAt: string;
-};
-type OrgSubmissionDetail = Submission & {
-  formId: string | { _id: string; name: string; fields?: FormField[] };
-};
-type TagDefinition = {
-  _id: string;
-  label: string;
-  tag: string;
-  type: "text" | "email" | "date" | "number" | "image" | "select";
-  options?: string[];
-};
-type Profile = {
-  fullName?: string;
-  workEmail?: string;
-  personalEmail?: string;
-  address?: string;
-  phone?: string;
-  citizenshipNumber?: string;
-  profilePhotoUrl?: string;
-  citizenshipPhotoUrl?: string;
-  customFields?: Record<string, string>;
-};
-
-type ProfileImageField = `${string}PhotoUrl`;
-
-type View = "user" | "profile" | "admin" | "org";
-type AdminView = "dashboard" | "builder" | "manage-orgs" | "manage-forms";
-
+  type AdminView,
+  type BuilderPaletteComponent,
+  type CustomComponentDraft,
+  type Form,
+  type FormBuilderComponent,
+  type FormField,
+  type Organization,
+  type OrgSubmissionDetail,
+  type OrgSubmissionSummary,
+  type Profile,
+  type ProfileImageField,
+  type Submission,
+  type TagDefinition,
+  type UserSubmissionDetail,
+  type View,
+} from "./types/app";
+import { defaultBuilderComponents } from "./features/admin/builder/default-components";
+import { AdminBuilderPage } from "./features/admin/builder/AdminBuilderPage";
+import { UserMyFormsPage } from "./features/user/pages/UserMyFormsPage";
+import { UserSearchFormsPage } from "./features/user/pages/UserSearchFormsPage";
+import { AdminDashboardPage } from "./features/admin/pages/AdminDashboardPage";
+import { OrganizationDashboardPage } from "./features/organization/pages/OrganizationDashboardPage";
+import { ProfilePage } from "./features/user/pages/ProfilePage";
+import { OnboardingPage } from "./features/user/pages/OnboardingPage";
+import { UserSubmissionDetailPage } from "./features/user/pages/UserSubmissionDetailPage";
+import { UserFormFillPage } from "./features/user/pages/UserFormFillPage";
+import { UserOrganizationFormsPage } from "./features/user/pages/UserOrganizationFormsPage";
+import { OrganizationSubmissionReviewPage } from "./features/organization/pages/OrganizationSubmissionReviewPage";
+import { AdminOrganizationsPage } from "./features/admin/pages/AdminOrganizationsPage";
+import { AdminTagsPage } from "./features/admin/pages/AdminTagsPage";
+import { AdminOrganizationSettingsPage } from "./features/admin/pages/AdminOrganizationSettingsPage";
+import { AdminManageOrganizationsPage } from "./features/admin/pages/AdminManageOrganizationsPage";
+import { AdminManageFormsPage } from "./features/admin/pages/AdminManageFormsPage";
 export default function App() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -143,40 +87,26 @@ export default function App() {
   const [formId, setFormId] = useState<string | null>(null);
   const [formName, setFormName] = useState("");
   const [formDescription, setFormDescription] = useState("");
-  const [formComponents, setFormComponents] = useState<
-    Array<{
-      id: string;
-      type: string;
-      label: string;
-      tag: string;
-      iconName?: string;
-      required: boolean;
-      options: string;
-    }>
-  >([]);
+  const [formComponents, setFormComponents] = useState<FormBuilderComponent[]>(
+    []
+  );
   const [draggingComponentId, setDraggingComponentId] = useState<string | null>(
     null
   );
   const [dropIndex, setDropIndex] = useState<number | null>(null);
   const [showCustomComponent, setShowCustomComponent] = useState(false);
   const [savedCustomComponents, setSavedCustomComponents] = useState<
-    Array<{
-      id: string;
-      type: string;
-      label: string;
-      tag: string;
-      iconName: string;
-      options: string;
-      removable: boolean;
-    }>
+    BuilderPaletteComponent[]
   >([]);
+  const [pendingReusableComponent, setPendingReusableComponent] = useState<
+    BuilderPaletteComponent | null
+  >(null);
   const [componentContextMenu, setComponentContextMenu] = useState<{
     x: number;
     y: number;
     componentId: string;
   } | null>(null);
-  const [tagTemplateId, setTagTemplateId] = useState("");
-  const [customComponent, setCustomComponent] = useState({
+  const [customComponent, setCustomComponent] = useState<CustomComponentDraft>({
     label: "",
     type: "text",
     tag: "",
@@ -348,80 +278,6 @@ export default function App() {
       return name.includes(query) || description.includes(query);
     });
   }, [manageForms, manageFormQuery]);
-
-  const renderBuilderIcon = (iconName?: string, className = "h-3.5 w-3.5 text-sand-900") => {
-    if (iconName === "type") return <Type className={className} />;
-    if (iconName === "mail") return <Mail className={className} />;
-    if (iconName === "calendar") return <Calendar className={className} />;
-    if (iconName === "map-pin") return <MapPin className={className} />;
-    if (iconName === "phone") return <Phone className={className} />;
-    if (iconName === "id-card") return <IdCard className={className} />;
-    if (iconName === "image") return <Image className={className} />;
-    if (iconName === "file-text") return <FileText className={className} />;
-    if (iconName === "user") return <User className={className} />;
-    if (iconName === "shield") return <Shield className={className} />;
-    return <BadgeCheck className={className} />;
-  };
-
-  const defaultBuilderComponents = useMemo(
-    () => [
-      {
-        id: "core-full-name",
-        type: "text",
-        label: "Full name",
-        tag: "fullName",
-        iconName: "type",
-        options: "",
-        removable: false,
-      },
-      {
-        id: "core-work-email",
-        type: "email",
-        label: "Work email",
-        tag: "workEmail",
-        iconName: "mail",
-        options: "",
-        removable: false,
-      },
-      {
-        id: "core-personal-email",
-        type: "email",
-        label: "Personal email",
-        tag: "personalEmail",
-        iconName: "mail",
-        options: "",
-        removable: false,
-      },
-      {
-        id: "core-address",
-        type: "text",
-        label: "Address",
-        tag: "address",
-        iconName: "map-pin",
-        options: "",
-        removable: false,
-      },
-      {
-        id: "core-phone",
-        type: "text",
-        label: "Phone",
-        tag: "phone",
-        iconName: "phone",
-        options: "",
-        removable: false,
-      },
-      {
-        id: "core-citizenship",
-        type: "text",
-        label: "Citizenship",
-        tag: "citizenshipNumber",
-        iconName: "id-card",
-        options: "",
-        removable: false,
-      },
-    ],
-    []
-  );
 
   const builderComponents = useMemo(
     () => [...defaultBuilderComponents, ...savedCustomComponents],
@@ -882,6 +738,67 @@ export default function App() {
     }
   };
 
+  const coerceTagType = (value: string): TagDefinition["type"] => {
+    if (value === "email") return "email";
+    if (value === "date") return "date";
+    if (value === "number") return "number";
+    if (value === "image") return "image";
+    if (value === "select") return "select";
+    return "text";
+  };
+
+  const splitComponentOptions = (rawOptions: string) =>
+    rawOptions
+      ? rawOptions
+          .split(",")
+          .map((option) => option.trim())
+          .filter(Boolean)
+      : [];
+
+  const upsertSystemTag = async (payload: {
+    label: string;
+    tag: string;
+    type: TagDefinition["type"];
+    options: string[];
+  }) => {
+    const normalizedTag = payload.tag.trim();
+    if (!normalizedTag) return;
+    if (baseProfileKeys.includes(normalizedTag as (typeof baseProfileKeys)[number])) {
+      return;
+    }
+
+    if (adminTags.some((item) => item.tag === normalizedTag)) {
+      return;
+    }
+
+    try {
+      const created = await adminFetch("/api/admin/tags", {
+        method: "POST",
+        body: JSON.stringify({
+          label: payload.label,
+          tag: normalizedTag,
+          type: payload.type,
+          options: payload.type === "select" ? payload.options : [],
+        }),
+      });
+
+      const nextTag = created?.data as TagDefinition | undefined;
+      if (nextTag?._id) {
+        setAdminTags((prev) => {
+          if (prev.some((item) => item.tag === nextTag.tag)) return prev;
+          return [...prev, nextTag].sort((a, b) =>
+            (a.label || "").localeCompare(b.label || "")
+          );
+        });
+      }
+    } catch (error) {
+      if (error instanceof Error && /already exists/i.test(error.message)) {
+        return;
+      }
+      throw error;
+    }
+  };
+
   const handleCreateForm = async () => {
     try {
       setFormMessage("");
@@ -893,21 +810,36 @@ export default function App() {
         setFormMessage("Form name is required.");
         return;
       }
-      const components = formComponents
-        .filter((component) => component.label.trim())
-        .map((component) => ({
-          id: component.id,
-          type: component.type.trim() || "text",
-          label: component.label.trim(),
-          tag:
-            component.tag.trim() ||
-            toProfileTag(component.label.trim()) ||
-            undefined,
-          required: component.required,
-          options: component.options
-            ? component.options.split(",").map((option) => option.trim())
-            : [],
-        }));
+      const sourceComponents = formComponents.filter((component) =>
+        component.label.trim()
+      );
+
+      const components = await Promise.all(
+        sourceComponents.map(async (component) => {
+          const cleanLabel = component.label.trim();
+          const normalizedTag = component.tag.trim() || toProfileTag(cleanLabel);
+          const normalizedType = coerceTagType(component.type.trim() || "text");
+          const normalizedOptions = splitComponentOptions(component.options);
+
+          if (normalizedTag) {
+            await upsertSystemTag({
+              label: cleanLabel,
+              tag: normalizedTag,
+              type: normalizedType,
+              options: normalizedOptions,
+            });
+          }
+
+          return {
+            id: component.id,
+            type: normalizedType,
+            label: cleanLabel,
+            tag: normalizedTag || undefined,
+            required: component.required,
+            options: normalizedOptions,
+          };
+        })
+      );
 
       if (formId) {
         await adminFetch(`/api/admin/orgs/${formOrgId}/forms/${formId}`, {
@@ -1183,6 +1115,38 @@ export default function App() {
     } catch (error) {
       setOrgSettingsMessage(
         error instanceof Error ? error.message : "Failed to update organization."
+      );
+    }
+  };
+
+  const handleDeleteOrganization = async () => {
+    if (!selectedAdminOrg) return;
+
+    const confirmed = window.confirm(
+      `Delete organization "${selectedAdminOrg.name}"? This will remove its forms and submissions.`
+    );
+    if (!confirmed) return;
+
+    try {
+      setOrgSettingsMessage("");
+      await adminFetch(`/api/admin/orgs/${selectedAdminOrg._id}`, {
+        method: "DELETE",
+      });
+
+      setAdminOrgs((prev) => prev.filter((item) => item._id !== selectedAdminOrg._id));
+      setSelectedAdminOrg(null);
+      setOrgSettingsName("");
+      setOrgSettingsStatus("active");
+      setOrgSettingsPanNumber("");
+      setOrgSettingsLicenseNumber("");
+      setOrgSettingsLocation("");
+      setOrgSettingsSubscriptionStatus("active");
+      setOrgSettingsSubscriptionStartsAt("");
+      setOrgSettingsSubscriptionEndsAt("");
+      navigate("/admin/orgs");
+    } catch (error) {
+      setOrgSettingsMessage(
+        error instanceof Error ? error.message : "Failed to delete organization."
       );
     }
   };
@@ -1524,6 +1488,7 @@ export default function App() {
       setView("user");
       if (
         location.pathname !== "/" &&
+        location.pathname !== "/search" &&
         location.pathname !== "/profile" &&
         location.pathname !== "/onboarding" &&
         !location.pathname.startsWith("/forms/") &&
@@ -1797,7 +1762,7 @@ export default function App() {
   return (
     <div className="min-h-screen">
       {!showLanding ? (
-        <header className="px-6 py-6 sm:px-10">
+        <header className="sticky top-0 z-50 border-b border-sand-200/70 bg-white/95 px-4 py-4 backdrop-blur sm:px-10 sm:py-6">
           <nav className="mx-auto flex max-w-6xl items-center justify-between">
             <div className="space-y-1">
               <p className="text-sm uppercase tracking-[0.2em] text-sand-500">
@@ -1810,20 +1775,27 @@ export default function App() {
             <div className="flex flex-wrap items-center gap-3">
               {showOnboarding ? null : (
                 <>
-                  {user ? (
-                    <Badge tone="neutral">{String(resolvedRole || role)}</Badge>
-                  ) : null}
                   {user && role === "user" ? (
                     <>
                       <Button
-                        variant={view === "user" ? "secondary" : "ghost"}
+                        className="hidden sm:inline-flex"
+                        variant={location.pathname === "/" ? "secondary" : "ghost"}
                         size="sm"
-                    onClick={() => navigate("/")}
+                        onClick={() => navigate("/")}
                       >
-                        Dashboard
+                        My Forms
                       </Button>
                       <Button
-                        variant={view === "profile" ? "secondary" : "ghost"}
+                        className="hidden sm:inline-flex"
+                        variant={location.pathname === "/search" ? "secondary" : "ghost"}
+                        size="sm"
+                        onClick={() => navigate("/search")}
+                      >
+                        Search Forms
+                      </Button>
+                      <Button
+                        className="hidden sm:inline-flex"
+                        variant={location.pathname === "/profile" ? "secondary" : "ghost"}
                         size="sm"
                         onClick={() => navigate("/profile")}
                       >
@@ -1846,7 +1818,7 @@ export default function App() {
                       size="sm"
                     onClick={() => navigate("/admin")}
                     >
-                      Admin
+                      Dashboard
                     </Button>
                   ) : null}
                   {user && role === "organization" ? (
@@ -1855,7 +1827,7 @@ export default function App() {
                       size="sm"
                     onClick={() => navigate("/org")}
                     >
-                      Review
+                      Dashboard
                     </Button>
                   ) : null}
                 </>
@@ -1882,7 +1854,7 @@ export default function App() {
         </header>
       ) : null}
 
-      <main className="px-6 pb-16 sm:px-10">
+      <main className="px-4 pb-24 sm:px-10 sm:pb-16">
         {showLanding ? <LandingPage /> : null}
         {!showLanding && user && !roleResolved ? (
           <section className="mx-auto mt-10 max-w-3xl">
@@ -1905,176 +1877,29 @@ export default function App() {
               path="/"
               element={
                 role === "user" && !showOnboarding ? (
-                  <>
-                    <section className="mx-auto grid max-w-6xl items-stretch gap-6 lg:grid-cols-2">
-                      <Card className="flex h-[calc(100vh-16rem)] flex-col space-y-6">
-                        <SectionHeading
-                          title="Find your organization"
-                          subtitle="Browse every organization and open its forms."
-                        />
-                        <div className="flex flex-col gap-3 sm:flex-row">
-                          <Input
-                            placeholder="Search organizations"
-                            value={orgQuery}
-                            onChange={(event) => setOrgQuery(event.target.value)}
-                          />
-                        </div>
-                        <div className="flex-1 space-y-3 overflow-y-auto pr-1">
-                          {orgResults.map((org) => (
-                            <div
-                              key={org._id}
-                              className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sand-200 bg-white p-4"
-                            >
-                              <div>
-                                <p className="text-lg font-semibold text-sand-950">
-                                  {org.name}
-                                </p>
-                                <p className="text-sm text-sand-500">
-                                  Active organization
-                                </p>
-                              </div>
-                              <Button
-                                variant="secondary"
-                                onClick={() => handleSelectOrg(org)}
-                                disabled={formLoading}
-                              >
-                                View forms
-                              </Button>
-                            </div>
-                          ))}
-                          {orgLoading ? (
-                            <p className="text-sm text-sand-500">Searching...</p>
-                          ) : null}
-                          {!orgLoading && !orgResults.length ? (
-                            <p className="text-sm text-sand-500">
-                              No organizations yet.
-                            </p>
-                          ) : null}
-                        </div>
-                      </Card>
-
-                      <Card className="flex h-[520px] flex-col space-y-5">
-                        <SectionHeading
-                          title="Submission status"
-                          subtitle="Track every form after submission."
-                        />
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <p className="text-sm text-sand-500">
-                            {submissions.length} submissions
-                          </p>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={handleClearCanceledSubmissions}
-                            disabled={!submissions.some((item) => item.status === "canceled")}
-                          >
-                            Clear canceled
-                          </Button>
-                        </div>
-                        <div className="flex-1 space-y-4 overflow-y-auto pr-1">
-                          {submissions.map((submission) => (
-                            <div
-                              key={submission._id}
-                              className="rounded-2xl border border-sand-200 bg-white p-4"
-                            >
-                              <div className="flex flex-wrap items-center justify-between gap-3">
-                                <div>
-                                  <p className="font-semibold text-sand-950">
-                                    {typeof submission.formId === "string"
-                                      ? `Form ${submission.formId}`
-                                      : submission.formId.name}
-                                  </p>
-                                  <p className="text-sm text-sand-500">
-                                    {new Date(submission.createdAt).toLocaleString()}
-                                  </p>
-                                  {submission.reviewNotes ? (
-                                    <p className="text-sm text-sand-500">
-                                      Notes: {submission.reviewNotes}
-                                    </p>
-                                  ) : null}
-                                  {submission.cooldownUntil ? (
-                                    <p className="text-sm text-sand-500">
-                                      Cooldown until: {new Date(
-                                        submission.cooldownUntil
-                                      ).toLocaleDateString()}
-                                    </p>
-                                  ) : null}
-                                </div>
-                                <StatusPill
-                                  status={
-                                    submission.status as
-                                      | "pending"
-                                      | "completed"
-                                      | "rejected"
-                                      | "canceled"
-                                  }
-                                />
-                              </div>
-                              <div className="mt-3 flex flex-wrap items-center gap-2">
-                                <Button
-                                  variant="secondary"
-                                  size="sm"
-                                  onClick={() =>
-                                    handleViewUserSubmission(submission._id)
-                                  }
-                                >
-                                  View
-                                </Button>
-                                {submission.status === "pending" ? (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() =>
-                                      handleCancelSubmission(submission._id)
-                                    }
-                                  >
-                                    Cancel submission
-                                  </Button>
-                                ) : null}
-                              </div>
-                            </div>
-                          ))}
-                          {!submissions.length ? (
-                            <p className="text-sm text-sand-500">
-                              No submissions yet.
-                            </p>
-                          ) : null}
-                        </div>
-                      </Card>
-
-                      {profileDraft.fullName &&
-                      profileDraft.workEmail &&
-                      profileDraft.personalEmail &&
-                      profileDraft.address ? null : (
-                        <Card className="space-y-5">
-                          <SectionHeading
-                            title="Next steps"
-                            subtitle="Complete your profile to unlock autofill."
-                          />
-                          <div className="space-y-4">
-                            <div className="rounded-2xl border border-sand-200 bg-white p-4">
-                              <p className="text-sm uppercase tracking-[0.2em] text-sand-500">
-                                Step 1
-                              </p>
-                              <p className="mt-2 text-lg font-semibold text-sand-950">
-                                Add the missing profile fields
-                              </p>
-                              <p className="text-sm text-sand-500">
-                                Your saved profile powers autofill.
-                              </p>
-                            </div>
-                            <Button
-                              size="lg"
-                              className="w-full"
-                              onClick={() => navigate("/profile")}
-                            >
-                              Go to profile
-                            </Button>
-                          </div>
-                        </Card>
-                      )}
-                    </section>
-                  </>
+                  <UserMyFormsPage
+                    submissions={submissions}
+                    handleClearCanceledSubmissions={handleClearCanceledSubmissions}
+                    handleViewUserSubmission={handleViewUserSubmission}
+                    handleCancelSubmission={handleCancelSubmission}
+                    profileDraft={profileDraft}
+                    navigateToProfile={() => navigate("/profile")}
+                  />
+                ) : null
+              }
+            />
+            <Route
+              path="/search"
+              element={
+                role === "user" && !showOnboarding ? (
+                  <UserSearchFormsPage
+                    orgQuery={orgQuery}
+                    setOrgQuery={setOrgQuery}
+                    orgResults={orgResults}
+                    handleSelectOrg={handleSelectOrg}
+                    formLoading={formLoading}
+                    orgLoading={orgLoading}
+                  />
                 ) : null
               }
             />
@@ -2082,273 +1907,27 @@ export default function App() {
               path="/profile"
               element={
                 role === "user" && !showOnboarding ? (
-                  <section className="mx-auto mt-10 max-w-3xl">
-                    <Card className="space-y-6">
-                      <SectionHeading
-                        title="Profile"
-                        subtitle="Keep your data accurate for every autofill."
-                      />
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <div className="space-y-1">
-                          <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                            Full name
-                          </p>
-                          <Input
-                            value={profileDraft.fullName || ""}
-                            onChange={(event) =>
-                              setProfileDraft((prev) => ({
-                                ...prev,
-                                fullName: event.target.value,
-                              }))
-                            }
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                            Work email
-                          </p>
-                          <Input
-                            value={profileDraft.workEmail || ""}
-                            onChange={(event) =>
-                              setProfileDraft((prev) => ({
-                                ...prev,
-                                workEmail: event.target.value,
-                              }))
-                            }
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                            Personal email
-                          </p>
-                          <Input
-                            value={profileDraft.personalEmail || ""}
-                            onChange={(event) =>
-                              setProfileDraft((prev) => ({
-                                ...prev,
-                                personalEmail: event.target.value,
-                              }))
-                            }
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                            Address
-                          </p>
-                          <Input
-                            value={profileDraft.address || ""}
-                            onChange={(event) =>
-                              setProfileDraft((prev) => ({
-                                ...prev,
-                                address: event.target.value,
-                              }))
-                            }
-                          />
-                        </div>
-                      </div>
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <div className="space-y-1">
-                          <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                            Phone number
-                          </p>
-                          <Input
-                            value={profileDraft.phone || ""}
-                            onChange={(event) =>
-                              setProfileDraft((prev) => ({
-                                ...prev,
-                                phone: event.target.value,
-                              }))
-                            }
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                            Citizenship number
-                          </p>
-                          <Input
-                            value={profileDraft.citizenshipNumber || ""}
-                            onChange={(event) =>
-                              setProfileDraft((prev) => ({
-                                ...prev,
-                                citizenshipNumber: event.target.value,
-                              }))
-                            }
-                          />
-                        </div>
-                      </div>
-                      {profileTags.filter((item) => !isBaseProfileKey(item.tag)).length ? (
-                        <div className="space-y-3">
-                          <p className="text-sm font-semibold text-sand-900">
-                            Additional profile fields
-                          </p>
-                          <div className="grid gap-4 sm:grid-cols-2">
-                            {profileTags
-                              .filter((item) => !isBaseProfileKey(item.tag))
-                              .map((item) => {
-                                const value = getProfileTagFieldValue(item.tag);
-
-                                if (item.type === "image") {
-                                  return (
-                                    <label
-                                      key={item._id}
-                                      className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center sm:col-span-2"
-                                    >
-                                      <Image className="mx-auto h-5 w-5 text-sand-700" />
-                                      <p className="text-sm font-semibold text-sand-900">
-                                        {item.label}
-                                      </p>
-                                      <p className="mt-1 text-xs text-sand-500">
-                                        {value ? "Update image" : "Browse files"}
-                                      </p>
-                                      {value || profileImageFileNames[item.tag] ? (
-                                        <p className="mt-1 text-xs text-sand-500">
-                                          {profileImageFileNames[item.tag] ||
-                                            getFileNameFromUrl(value) ||
-                                            "Uploaded image"}
-                                        </p>
-                                      ) : null}
-                                      <input
-                                        className="hidden"
-                                        type="file"
-                                        accept="image/*"
-                                        onChange={(event) =>
-                                          handleProfileTagImageUpload(
-                                            item.tag,
-                                            event.target.files?.[0]
-                                          )
-                                        }
-                                      />
-                                      {value ? (
-                                        <img
-                                          src={value}
-                                          alt={item.label}
-                                          className="mx-auto mt-3 h-44 w-full max-w-md rounded-xl object-cover"
-                                        />
-                                      ) : null}
-                                      {value ? (
-                                        <span className="mt-3 inline-flex rounded-full border border-sand-300 px-3 py-1 text-xs font-semibold text-sand-700">
-                                          Change image
-                                        </span>
-                                      ) : null}
-                                      {uploadingImageTarget === `tag:${item.tag}` ? (
-                                        <p className="mt-2 text-xs text-sand-500">
-                                          Uploading image...
-                                        </p>
-                                      ) : null}
-                                    </label>
-                                  );
-                                }
-
-                                if (item.type === "select") {
-                                  return (
-                                    <div key={item._id} className="space-y-1">
-                                      <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                                        {item.label}
-                                      </p>
-                                      <Select
-                                        value={value}
-                                        onChange={(event) =>
-                                          setProfileTagFieldValue(
-                                            item.tag,
-                                            event.target.value
-                                          )
-                                        }
-                                      >
-                                        <option value="">Select {item.label}</option>
-                                        {(item.options || []).map((option) => (
-                                          <option key={option} value={option}>
-                                            {option}
-                                          </option>
-                                        ))}
-                                      </Select>
-                                    </div>
-                                  );
-                                }
-
-                                return (
-                                  <div key={item._id} className="space-y-1">
-                                    <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                                      {item.label}
-                                    </p>
-                                    <Input
-                                      type={
-                                        item.type === "number"
-                                          ? "number"
-                                          : item.type === "date"
-                                          ? "date"
-                                          : item.type === "email"
-                                          ? "email"
-                                          : "text"
-                                      }
-                                      value={value}
-                                      onChange={(event) =>
-                                        setProfileTagFieldValue(
-                                          item.tag,
-                                          event.target.value
-                                        )
-                                      }
-                                    />
-                                  </div>
-                                );
-                              })}
-                          </div>
-                        </div>
-                      ) : null}
-                      <div className="space-y-4">
-                        <label className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
-                          <Image className="mx-auto h-5 w-5 text-sand-700" />
-                          <p className="text-sm font-semibold text-sand-900">Profile photo</p>
-                          <p className="mt-1 text-xs text-sand-500">
-                            {getProfileImageValue(profileDraft, "profilePhotoUrl")
-                              ? "Update image"
-                              : "Browse files"}
-                          </p>
-                          {getProfileImageValue(profileDraft, "profilePhotoUrl") || profileImageFileNames.profilePhotoUrl ? (
-                            <p className="mt-1 text-xs text-sand-500">
-                              {profileImageFileNames.profilePhotoUrl ||
-                                getFileNameFromUrl(
-                                  getProfileImageValue(profileDraft, "profilePhotoUrl")
-                                ) ||
-                                "Uploaded image"}
-                            </p>
-                          ) : null}
-                          <input
-                            className="hidden"
-                            type="file"
-                            accept="image/*"
-                            onChange={(event) =>
-                              handleProfileImageUpload(
-                                "profilePhotoUrl",
-                                event.target.files?.[0]
-                              )
-                            }
-                          />
-                          {getProfileImageValue(profileDraft, "profilePhotoUrl") ? (
-                            <img
-                              src={getProfileImageValue(profileDraft, "profilePhotoUrl")}
-                              alt="Profile"
-                              className="mx-auto mt-3 h-44 w-full max-w-md rounded-xl object-cover"
-                            />
-                          ) : null}
-                          {getProfileImageValue(profileDraft, "profilePhotoUrl") ? (
-                            <span className="mt-3 inline-flex rounded-full border border-sand-300 px-3 py-1 text-xs font-semibold text-sand-700">
-                              Change image
-                            </span>
-                          ) : null}
-                        </label>
-                        {uploadingImageTarget === "profilePhotoUrl" ? (
-                          <p className="text-xs text-sand-500">Uploading profile image...</p>
-                        ) : null}
-
-                      </div>
-                      <div className="flex flex-col gap-3 sm:flex-row">
-                        <Button onClick={handleProfileSave}>Save profile</Button>
-                      </div>
-                      {profileMessage ? (
-                        <p className="text-sm text-sand-500">{profileMessage}</p>
-                      ) : null}
-                    </Card>
-                  </section>
+                  <ProfilePage
+                    registeredEmail={
+                      user?.primaryEmailAddress?.emailAddress ||
+                      user?.emailAddresses?.[0]?.emailAddress ||
+                      ""
+                    }
+                    avatarInitials={profileNavAvatar.initials}
+                    avatarBackgroundImage={profileNavAvatar.backgroundImage}
+                    profileDraft={profileDraft}
+                    setProfileDraft={setProfileDraft}
+                    profileTags={profileTags}
+                    isBaseProfileKey={isBaseProfileKey}
+                    getProfileTagFieldValue={getProfileTagFieldValue}
+                    setProfileTagFieldValue={setProfileTagFieldValue}
+                    profileImageFileNames={profileImageFileNames}
+                    getFileNameFromUrl={getFileNameFromUrl}
+                    handleProfileTagImageUpload={handleProfileTagImageUpload}
+                    uploadingImageTarget={uploadingImageTarget}
+                    handleProfileSave={handleProfileSave}
+                    profileMessage={profileMessage}
+                  />
                 ) : null
               }
             />
@@ -2356,150 +1935,18 @@ export default function App() {
               path="/onboarding"
               element={
                 role === "user" && showOnboarding ? (
-                  <section className="mx-auto mt-10 max-w-2xl">
-                    <Card className="space-y-6">
-                      <div className="space-y-3">
-                        <p className="text-xs uppercase tracking-[0.3em] text-sand-500">
-                          Welcome to Omniform
-                        </p>
-                        <h2 className="text-3xl font-semibold text-sand-950">
-                          Let’s set up your profile
-                        </h2>
-                        <p className="text-sm text-sand-500">
-                          Complete the essentials to unlock form filling.
-                        </p>
-                      </div>
-                      <div className="h-1 w-full overflow-hidden rounded-full bg-sand-200">
-                        <div
-                          className="h-full rounded-full bg-sand-900 transition-all"
-                          style={{ width: onboardingStep === 1 ? "50%" : "100%" }}
-                        />
-                      </div>
-
-                      {onboardingStep === 1 ? (
-                        <div className="grid gap-4 sm:grid-cols-2">
-                          <Input
-                            placeholder="Full name *"
-                            value={profileDraft.fullName || ""}
-                            onChange={(event) =>
-                              setProfileDraft((prev) => ({
-                                ...prev,
-                                fullName: event.target.value,
-                              }))
-                            }
-                          />
-                          <Input
-                            placeholder="Work email *"
-                            value={profileDraft.workEmail || ""}
-                            onChange={(event) =>
-                              setProfileDraft((prev) => ({
-                                ...prev,
-                                workEmail: event.target.value,
-                              }))
-                            }
-                          />
-                          <Input
-                            placeholder="Personal email *"
-                            value={profileDraft.personalEmail || ""}
-                            onChange={(event) =>
-                              setProfileDraft((prev) => ({
-                                ...prev,
-                                personalEmail: event.target.value,
-                              }))
-                            }
-                          />
-                          <Input
-                            placeholder="Address *"
-                            value={profileDraft.address || ""}
-                            onChange={(event) =>
-                              setProfileDraft((prev) => ({
-                                ...prev,
-                                address: event.target.value,
-                              }))
-                            }
-                          />
-                        </div>
-                      ) : (
-                        <>
-                          <div className="grid gap-4 sm:grid-cols-2">
-                            <Input
-                              placeholder="Phone number"
-                              value={profileDraft.phone || ""}
-                              onChange={(event) =>
-                                setProfileDraft((prev) => ({
-                                  ...prev,
-                                  phone: event.target.value,
-                                }))
-                              }
-                            />
-                            <Input
-                              placeholder="Citizenship number"
-                              value={profileDraft.citizenshipNumber || ""}
-                              onChange={(event) =>
-                                setProfileDraft((prev) => ({
-                                  ...prev,
-                                  citizenshipNumber: event.target.value,
-                                }))
-                              }
-                            />
-                          </div>
-                          <div className="space-y-4">
-                          <label className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
-                            <Image className="mx-auto h-5 w-5 text-sand-700" />
-                            <p className="text-sm font-semibold text-sand-900">Profile photo</p>
-                            <p className="mt-1 text-xs text-sand-500">
-                              {profileDraft.profilePhotoUrl ? "Update image" : "Browse files"}
-                            </p>
-                            {profileDraft.profilePhotoUrl || profileImageFileNames.profilePhotoUrl ? (
-                              <p className="mt-1 text-xs text-sand-500">
-                                {profileImageFileNames.profilePhotoUrl ||
-                                  getFileNameFromUrl(profileDraft.profilePhotoUrl) ||
-                                  "Uploaded image"}
-                              </p>
-                            ) : null}
-                            <input
-                              className="hidden"
-                              type="file"
-                              accept="image/*"
-                              onChange={(event) =>
-                                handleProfileImageUpload(
-                                  "profilePhotoUrl",
-                                  event.target.files?.[0]
-                                )
-                              }
-                            />
-                            {profileDraft.profilePhotoUrl ? (
-                              <span className="mt-3 inline-flex rounded-full border border-sand-300 px-3 py-1 text-xs font-semibold text-sand-700">
-                                Change image
-                              </span>
-                            ) : null}
-                          </label>
-                          </div>
-                        </>
-                      )}
-
-                      <div className="flex flex-wrap gap-3">
-                        {onboardingStep === 1 ? (
-                          <Button onClick={handleOnboardingNext}>Next</Button>
-                        ) : (
-                          <>
-                            <Button onClick={handleOnboardingFinish}>
-                              Save and finish
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              onClick={() => setShowOnboarding(false)}
-                            >
-                              Skip for now
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                      {profileMessage ? (
-                        <p className="text-sm text-sand-500">{profileMessage}</p>
-                      ) : null}
-                    </Card>
-                  </section>
+                  <OnboardingPage
+                    onboardingStep={onboardingStep}
+                    profileDraft={profileDraft}
+                    setProfileDraft={setProfileDraft}
+                    profileImageFileNames={profileImageFileNames}
+                    getFileNameFromUrl={getFileNameFromUrl}
+                    handleProfileImageUpload={handleProfileImageUpload}
+                    handleOnboardingNext={handleOnboardingNext}
+                    handleOnboardingFinish={handleOnboardingFinish}
+                    setShowOnboarding={setShowOnboarding}
+                    profileMessage={profileMessage}
+                  />
                 ) : null
               }
             />
@@ -2507,140 +1954,20 @@ export default function App() {
               path="/forms/:formId"
               element={
                 role === "user" && !showOnboarding ? (
-                  <section className="mx-auto mt-10 max-w-4xl">
-                    <Card className="space-y-6">
-                      <div className="flex flex-wrap items-start justify-between gap-4">
-                        <SectionHeading
-                          title={activeForm?.name || "Select a form"}
-                          subtitle={
-                            activeForm?.description ||
-                            "Choose a form from the dashboard to start filling."
-                          }
-                        />
-                        <Button
-                          variant="ghost"
-                          onClick={() => navigate("/")}
-                        >
-                          Back to dashboard
-                        </Button>
-                      </div>
-                      {activeForm ? (
-                        <div className="space-y-6">
-                          <div className="flex flex-wrap items-center gap-3">
-                            <Button variant="secondary" onClick={handleAutofill}>
-                              Autofill
-                            </Button>
-                          </div>
-                          <div className="grid gap-4 sm:grid-cols-2">
-                            {(activeForm.components || activeForm.fields || []).map(
-                              (field, index) => {
-                                const fieldKey =
-                                  field.id || field.tag || `field-${index}`;
-                                const value = formValues[fieldKey] || "";
-                                const error = formErrors[fieldKey];
-                                return (
-                                  <div key={fieldKey} className="space-y-2">
-                                    {field.type === "image" ? (
-                                      <>
-                                        <label className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
-                                          <Image className="mx-auto h-5 w-5 text-sand-700" />
-                                          <p className="text-sm font-semibold text-sand-900">
-                                            {field.required
-                                              ? `${field.label} *`
-                                              : field.label}
-                                          </p>
-                                          <p className="mt-1 text-xs text-sand-500">
-                                            {value ? "Update image" : "Browse files"}
-                                          </p>
-                                          {value || formImageFileNames[fieldKey] ? (
-                                            <p className="mt-1 text-xs text-sand-500">
-                                              {formImageFileNames[fieldKey] ||
-                                                getFileNameFromUrl(value) ||
-                                                "Uploaded image"}
-                                            </p>
-                                          ) : null}
-                                          <input
-                                            className="hidden"
-                                            type="file"
-                                            accept="image/*"
-                                            onChange={(event) =>
-                                              handleFormImageUpload(
-                                                fieldKey,
-                                                event.target.files?.[0]
-                                              )
-                                            }
-                                          />
-                                          {value ? (
-                                            <img
-                                              src={value}
-                                              alt={field.label}
-                                              className="mx-auto mt-3 h-24 rounded-xl object-cover"
-                                            />
-                                          ) : null}
-                                          {value ? (
-                                            <span className="mt-3 inline-flex rounded-full border border-sand-300 px-3 py-1 text-xs font-semibold text-sand-700">
-                                              Change image
-                                            </span>
-                                          ) : null}
-                                        </label>
-                                        {uploadingImageTarget === `form:${fieldKey}` ? (
-                                          <p className="text-xs text-sand-500">
-                                            Uploading image...
-                                          </p>
-                                        ) : null}
-                                      </>
-                                    ) : (
-                                      <Input
-                                        type={
-                                          field.type === "number"
-                                            ? "number"
-                                            : field.type === "date"
-                                            ? "date"
-                                            : field.type === "email"
-                                            ? "email"
-                                            : "text"
-                                        }
-                                        placeholder={
-                                          field.required
-                                            ? `${field.label} *`
-                                            : field.label
-                                        }
-                                        value={value}
-                                        onChange={(event) =>
-                                          setFormValues((prev) => ({
-                                            ...prev,
-                                            [fieldKey]: event.target.value,
-                                          }))
-                                        }
-                                      />
-                                    )}
-                                    {error ? (
-                                      <p className="text-sm text-sand-500">
-                                        {error}
-                                      </p>
-                                    ) : null}
-                                  </div>
-                                );
-                              }
-                            )}
-                          </div>
-                          <div className="flex flex-wrap items-center gap-3">
-                            <Button onClick={handleSubmitForm}>Submit</Button>
-                            {submitMessage ? (
-                              <p className="text-sm text-sand-500">
-                                {submitMessage}
-                              </p>
-                            ) : null}
-                          </div>
-                        </div>
-                      ) : (
-                        <p className="text-sm text-sand-500">
-                          Start by selecting an organization and form on the
-                          dashboard.
-                        </p>
-                      )}
-                    </Card>
-                  </section>
+                  <UserFormFillPage
+                    activeForm={activeForm}
+                    formValues={formValues}
+                    setFormValues={setFormValues}
+                    formErrors={formErrors}
+                    formImageFileNames={formImageFileNames}
+                    getFileNameFromUrl={getFileNameFromUrl}
+                    handleFormImageUpload={handleFormImageUpload}
+                    uploadingImageTarget={uploadingImageTarget}
+                    handleAutofill={handleAutofill}
+                    handleSubmitForm={handleSubmitForm}
+                    submitMessage={submitMessage}
+                    onBack={() => navigate("/")}
+                  />
                 ) : null
               }
             />
@@ -2648,88 +1975,17 @@ export default function App() {
               path="/orgs/:orgId"
               element={
                 role === "user" && !showOnboarding ? (
-                  <section className="mx-auto mt-10 max-w-6xl">
-                    <Card className="space-y-6">
-                      <div className="flex flex-wrap items-center justify-between gap-4">
-                        <SectionHeading
-                          title={
-                            selectedOrg
-                              ? `Forms for ${selectedOrg.name}`
-                              : "Organization forms"
-                          }
-                          subtitle="Browse templates and autofill instantly."
-                        />
-                        <Button
-                          variant="ghost"
-                          onClick={() => navigate("/")}
-                        >
-                          Back to dashboard
-                        </Button>
-                      </div>
-                      <div className="flex flex-col gap-3 sm:flex-row">
-                        <Input
-                          placeholder="Search forms"
-                          value={formQuery}
-                          onChange={(event) => setFormQuery(event.target.value)}
-                        />
-                      </div>
-                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                        {forms.map((form) => (
-                          <Card key={form._id} className="space-y-3">
-                            <div className="space-y-1">
-                              <p className="text-lg font-semibold text-sand-950">
-                                {form.name}
-                              </p>
-                              <p className="text-sm text-sand-500">
-                                {form.description || "No description"}
-                              </p>
-                            </div>
-                            <Button size="sm" onClick={() => openForm(form)}>
-                              Fill
-                            </Button>
-                          </Card>
-                        ))}
-                        {formLoading ? (
-                          <p className="text-sm text-sand-500">Loading forms...</p>
-                        ) : null}
-                        {!formLoading && !forms.length ? (
-                          <p className="text-sm text-sand-500">No forms yet.</p>
-                        ) : null}
-                        </div>
-                      </Card>
-
-                      {profileDraft.fullName &&
-                      profileDraft.workEmail &&
-                      profileDraft.personalEmail &&
-                      profileDraft.address ? null : (
-                        <Card className="space-y-5 lg:col-span-2">
-                          <SectionHeading
-                            title="Next steps"
-                            subtitle="Complete your profile to unlock autofill."
-                          />
-                          <div className="space-y-4">
-                            <div className="rounded-2xl border border-sand-200 bg-white p-4">
-                              <p className="text-sm uppercase tracking-[0.2em] text-sand-500">
-                                Step 1
-                              </p>
-                              <p className="mt-2 text-lg font-semibold text-sand-950">
-                                Add the missing profile fields
-                              </p>
-                              <p className="text-sm text-sand-500">
-                                Your saved profile powers autofill.
-                              </p>
-                            </div>
-                            <Button
-                              size="lg"
-                              className="w-full"
-                              onClick={() => navigate("/profile")}
-                            >
-                              Go to profile
-                            </Button>
-                          </div>
-                        </Card>
-                      )}
-                    </section>
+                  <UserOrganizationFormsPage
+                    selectedOrg={selectedOrg}
+                    formQuery={formQuery}
+                    setFormQuery={setFormQuery}
+                    forms={forms}
+                    formLoading={formLoading}
+                    openForm={openForm}
+                    profileDraft={profileDraft}
+                    onBack={() => navigate("/")}
+                    onGoProfile={() => navigate("/profile")}
+                  />
                 ) : null
               }
             />
@@ -2737,91 +1993,12 @@ export default function App() {
               path="/submissions/:submissionId"
               element={
                 role === "user" && !showOnboarding ? (
-                  <section className="mx-auto mt-10 max-w-4xl">
-                    <Card className="space-y-6">
-                      <div className="flex flex-wrap items-center justify-between gap-4">
-                        <SectionHeading
-                          title={
-                            selectedUserSubmission
-                              ? typeof selectedUserSubmission.formId === "string"
-                                ? "Submission details"
-                                : selectedUserSubmission.formId.name
-                              : "Submission details"
-                          }
-                          subtitle="Review what you submitted and track status."
-                        />
-                        <Button
-                          variant="ghost"
-                          onClick={() => navigate("/")}
-                        >
-                          Back to dashboard
-                        </Button>
-                      </div>
-                      {selectedUserSubmission ? (
-                        <div className="space-y-6">
-                          <div className="flex flex-wrap items-center gap-3">
-                            <StatusPill status={selectedUserSubmission.status} />
-                            <p className="text-sm text-sand-500">
-                              Submitted{
-                              " " +
-                                new Date(
-                                  selectedUserSubmission.createdAt
-                                ).toLocaleString()}
-                            </p>
-                          </div>
-                          {selectedUserSubmission.data ? (
-                            <div className="grid gap-3 sm:grid-cols-2">
-                              {Object.entries(selectedUserSubmission.data).map(
-                                ([key, value]) => (
-                                  <div
-                                    key={key}
-                                    className="rounded-2xl border border-sand-200 bg-white p-3"
-                                  >
-                                    <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                                      {key}
-                                    </p>
-                                    {renderSubmissionValue(
-                                      selectedUserSubmission,
-                                      key,
-                                      String(value || "")
-                                    )}
-                                  </div>
-                                )
-                              )}
-                            </div>
-                          ) : (
-                            <p className="text-sm text-sand-500">
-                              No data submitted.
-                            </p>
-                          )}
-                          {selectedUserSubmission.reviewNotes ? (
-                            <div className="rounded-2xl border border-sand-200 bg-white p-4">
-                              <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                                Review notes
-                              </p>
-                              <p className="mt-2 text-sm text-sand-950">
-                                {selectedUserSubmission.reviewNotes}
-                              </p>
-                            </div>
-                          ) : null}
-                          {selectedUserSubmission.status === "pending" ? (
-                            <Button
-                              variant="ghost"
-                              onClick={() =>
-                                handleCancelSubmission(selectedUserSubmission._id)
-                              }
-                            >
-                              Cancel submission
-                            </Button>
-                          ) : null}
-                        </div>
-                      ) : (
-                        <p className="text-sm text-sand-500">
-                          Select a submission to review.
-                        </p>
-                      )}
-                    </Card>
-                  </section>
+                  <UserSubmissionDetailPage
+                    selectedUserSubmission={selectedUserSubmission}
+                    renderSubmissionValue={renderSubmissionValue}
+                    handleCancelSubmission={handleCancelSubmission}
+                    onBack={() => navigate("/")}
+                  />
                 ) : null
               }
             />
@@ -2829,143 +2006,32 @@ export default function App() {
               path="/admin"
               element={
                 role === "admin" ? (
-                  <section className="mx-auto mt-10 grid max-w-6xl gap-6 lg:grid-cols-[1fr_1fr]">
-                    <Card className="space-y-5">
-                      <SectionHeading
-                        title="Admin control center"
-                        subtitle="Register organizations and assign org accounts."
-                      />
-                      <div className="space-y-3">
-                        <Input
-                          placeholder="Organization name"
-                          value={orgName}
-                          onChange={(event) => setOrgName(event.target.value)}
-                        />
-                        <Input
-                          placeholder="Organization userId (optional)"
-                          value={orgUserId}
-                          onChange={(event) => setOrgUserId(event.target.value)}
-                        />
-                        <div className="space-y-2">
-                          <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                            Subscription period
-                          </p>
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            <Input
-                              type="date"
-                              value={orgCreateSubscriptionStartsAt}
-                              onChange={(event) =>
-                                setOrgCreateSubscriptionStartsAt(event.target.value)
-                              }
-                            />
-                            <Input
-                              type="date"
-                              value={orgCreateSubscriptionEndsAt}
-                              onChange={(event) =>
-                                setOrgCreateSubscriptionEndsAt(event.target.value)
-                              }
-                            />
-                          </div>
-                        </div>
-                        <Button onClick={handleCreateOrg}>
-                          Create organization
-                        </Button>
-                        {createdOrgId ? (
-                          <p className="text-sm text-sand-500">
-                            Created org ID: {createdOrgId}
-                          </p>
-                        ) : null}
-                        {orgMessage ? (
-                          <p className="text-sm text-sand-500">{orgMessage}</p>
-                        ) : null}
-                      </div>
-                    </Card>
-
-                    <Card className="space-y-5">
-                      <SectionHeading
-                        title="Assign roles"
-                        subtitle="Promote users or link org accounts."
-                      />
-                      <div className="space-y-3">
-                        <Input
-                          placeholder="User email"
-                          value={roleUserEmail}
-                          onChange={(event) => setRoleUserEmail(event.target.value)}
-                        />
-                        <div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
-                          <Select
-                            value={roleValue}
-                            onChange={(event) => setRoleValue(event.target.value)}
-                          >
-                            <option value="user">user</option>
-                            <option value="organization">organization</option>
-                            <option value="admin">admin</option>
-                          </Select>
-                          <ComboBox
-                            value={roleOrgId}
-                            onChange={setRoleOrgId}
-                            options={adminOrgs.map((org) => ({
-                              value: org._id,
-                              label: org.name,
-                            }))}
-                            placeholder="Search organization"
-                          />
-                        </div>
-                        <Button variant="secondary" onClick={handleSetRole}>
-                          Update role
-                        </Button>
-                        {roleMessage ? (
-                          <p className="text-sm text-sand-500">{roleMessage}</p>
-                        ) : null}
-                      </div>
-                    </Card>
-                    <Card className="space-y-5">
-                      <SectionHeading
-                        title="Profile tags"
-                        subtitle="Manage reusable labels, keys, and input types."
-                      />
-                      <p className="text-sm text-sand-500">
-                        Add, edit, or remove tags used in forms and user profiles.
-                      </p>
-                      <Button onClick={() => navigate("/admin/tags")}>Manage tags</Button>
-                    </Card>
-                    <Card className="space-y-5">
-                      <SectionHeading
-                        title="Form builder"
-                        subtitle="Launch the full-screen builder workspace."
-                      />
-                      <p className="text-sm text-sand-500">
-                        Build forms in a dedicated canvas with drag-and-drop components.
-                      </p>
-                      <Button onClick={() => navigate("/admin/builder")}>
-                        Open builder
-                      </Button>
-                    </Card>
-                    <Card className="space-y-5">
-                      <SectionHeading
-                        title="Manage forms"
-                        subtitle="Browse and organize form templates."
-                      />
-                      <p className="text-sm text-sand-500">
-                        Review every organization and its form templates.
-                      </p>
-                      <Button onClick={() => navigate("/admin/manage")}>
-                        Manage forms
-                      </Button>
-                    </Card>
-                    <Card className="space-y-5">
-                      <SectionHeading
-                        title="Organization settings"
-                        subtitle="View compliance and subscription details."
-                      />
-                      <p className="text-sm text-sand-500">
-                        Update PAN, license, location, and renewals.
-                      </p>
-                      <Button onClick={() => navigate("/admin/orgs")}>
-                        Manage organizations
-                      </Button>
-                    </Card>
-                  </section>
+                  <AdminDashboardPage
+                    orgName={orgName}
+                    setOrgName={setOrgName}
+                    orgUserId={orgUserId}
+                    setOrgUserId={setOrgUserId}
+                    orgCreateSubscriptionStartsAt={orgCreateSubscriptionStartsAt}
+                    setOrgCreateSubscriptionStartsAt={setOrgCreateSubscriptionStartsAt}
+                    orgCreateSubscriptionEndsAt={orgCreateSubscriptionEndsAt}
+                    setOrgCreateSubscriptionEndsAt={setOrgCreateSubscriptionEndsAt}
+                    handleCreateOrg={handleCreateOrg}
+                    createdOrgId={createdOrgId}
+                    orgMessage={orgMessage}
+                    roleUserEmail={roleUserEmail}
+                    setRoleUserEmail={setRoleUserEmail}
+                    roleValue={roleValue}
+                    setRoleValue={setRoleValue}
+                    roleOrgId={roleOrgId}
+                    setRoleOrgId={setRoleOrgId}
+                    adminOrgs={adminOrgs}
+                    handleSetRole={handleSetRole}
+                    roleMessage={roleMessage}
+                    goTags={() => navigate("/admin/tags")}
+                    goBuilder={() => navigate("/admin/builder")}
+                    goManageForms={() => navigate("/admin/manage")}
+                    goOrgs={() => navigate("/admin/orgs")}
+                  />
                 ) : null
               }
             />
@@ -2973,47 +2039,13 @@ export default function App() {
               path="/admin/orgs"
               element={
                 role === "admin" ? (
-                  <section className="mx-auto mt-6 max-w-6xl">
-                    <Card className="space-y-6">
-                      <div className="flex flex-wrap items-center justify-between gap-4">
-                        <SectionHeading
-                          title="Organizations"
-                          subtitle="Select an organization to edit settings."
-                        />
-                        <Button variant="ghost" onClick={() => navigate("/admin")}>
-                          Back to dashboard
-                        </Button>
-                      </div>
-                      <Input
-                        placeholder="Search organizations"
-                        value={manageOrgQuery}
-                        onChange={(event) => setManageOrgQuery(event.target.value)}
-                      />
-                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                        {filteredAdminOrgs.map((org) => (
-                          <Card key={org._id} className="space-y-3">
-                            <div className="space-y-1">
-                              <p className="text-lg font-semibold text-sand-950">
-                                {org.name}
-                              </p>
-                              <p className="text-sm text-sand-500">{org.slug}</p>
-                            </div>
-                            <Button
-                              variant="secondary"
-                              onClick={() => handleOpenOrgSettings(org)}
-                            >
-                              Manage organization
-                            </Button>
-                          </Card>
-                        ))}
-                        {!filteredAdminOrgs.length ? (
-                          <p className="text-sm text-sand-500">
-                            No organizations match that search.
-                          </p>
-                        ) : null}
-                      </div>
-                    </Card>
-                  </section>
+                  <AdminOrganizationsPage
+                    filteredAdminOrgs={filteredAdminOrgs}
+                    manageOrgQuery={manageOrgQuery}
+                    setManageOrgQuery={setManageOrgQuery}
+                    handleOpenOrgSettings={handleOpenOrgSettings}
+                    onBack={() => navigate("/admin")}
+                  />
                 ) : null
               }
             />
@@ -3021,116 +2053,24 @@ export default function App() {
               path="/admin/tags"
               element={
                 role === "admin" ? (
-                  <section className="mx-auto mt-6 max-w-6xl">
-                    <Card className="space-y-6">
-                      <div className="flex flex-wrap items-center justify-between gap-4">
-                        <SectionHeading
-                          title="Manage tags"
-                          subtitle="Configure label, key, input type, and options for reusable profile fields."
-                        />
-                        <Button variant="ghost" onClick={() => navigate("/admin")}>
-                          Back to dashboard
-                        </Button>
-                      </div>
-                      <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
-                        <Card className="space-y-4 border border-sand-200 bg-sand-50/50">
-                          <SectionHeading
-                            title={editingTagId ? "Edit tag" : "Create tag"}
-                            subtitle="These tags power form mapping and profile inputs."
-                          />
-                          <Input
-                            placeholder="Label (e.g., Citizenship Front)"
-                            value={tagLabel}
-                            onChange={(event) => setTagLabel(event.target.value)}
-                          />
-                          <Input
-                            placeholder="Tag key (optional, auto-generated if empty)"
-                            value={tagValue}
-                            onChange={(event) => setTagValue(event.target.value)}
-                          />
-                          <div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
-                            <Select
-                              value={tagType}
-                              onChange={(event) =>
-                                setTagType(event.target.value as TagDefinition["type"])
-                              }
-                            >
-                              <option value="text">text</option>
-                              <option value="email">email</option>
-                              <option value="date">date</option>
-                              <option value="number">number</option>
-                              <option value="image">image</option>
-                              <option value="select">select</option>
-                            </Select>
-                            <Input
-                              placeholder="Select options (comma separated)"
-                              value={tagOptions}
-                              onChange={(event) => setTagOptions(event.target.value)}
-                              disabled={tagType !== "select"}
-                            />
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <Button variant="secondary" onClick={handleCreateTag}>
-                              {editingTagId ? "Save changes" : "Create tag"}
-                            </Button>
-                            {editingTagId ? (
-                              <Button variant="ghost" onClick={handleCancelEditTag}>
-                                Cancel edit
-                              </Button>
-                            ) : null}
-                          </div>
-                          {tagMessage ? (
-                            <p className="text-sm text-sand-500">{tagMessage}</p>
-                          ) : null}
-                        </Card>
-
-                        <Card className="space-y-4 border border-sand-200 bg-sand-50/50">
-                          <SectionHeading
-                            title="Existing tags"
-                            subtitle="Use edit to update labels/types or remove to delete." 
-                          />
-                          <div className="max-h-[28rem] space-y-2 overflow-y-auto pr-1">
-                            {adminTags.map((item) => (
-                              <div
-                                key={item._id}
-                                className="flex items-center justify-between gap-3 rounded-2xl border border-sand-200 bg-white px-3 py-2"
-                              >
-                                <div>
-                                  <p className="text-sm font-semibold text-sand-900">
-                                    {item.label}
-                                  </p>
-                                  <p className="text-xs text-sand-500">
-                                    {item.tag} · {item.type}
-                                  </p>
-                                </div>
-                                <div className="flex gap-2">
-                                  <Button
-                                    size="sm"
-                                    variant="secondary"
-                                    onClick={() => handleStartEditTag(item)}
-                                  >
-                                    Edit
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => handleDeleteTag(item._id)}
-                                  >
-                                    Remove
-                                  </Button>
-                                </div>
-                              </div>
-                            ))}
-                            {!adminTags.length ? (
-                              <p className="text-sm text-sand-500">
-                                No tags created yet.
-                              </p>
-                            ) : null}
-                          </div>
-                        </Card>
-                      </div>
-                    </Card>
-                  </section>
+                  <AdminTagsPage
+                    editingTagId={editingTagId}
+                    tagLabel={tagLabel}
+                    setTagLabel={setTagLabel}
+                    tagValue={tagValue}
+                    setTagValue={setTagValue}
+                    tagType={tagType}
+                    setTagType={setTagType}
+                    tagOptions={tagOptions}
+                    setTagOptions={setTagOptions}
+                    handleCreateTag={handleCreateTag}
+                    handleCancelEditTag={handleCancelEditTag}
+                    tagMessage={tagMessage}
+                    adminTags={adminTags}
+                    handleStartEditTag={handleStartEditTag}
+                    handleDeleteTag={handleDeleteTag}
+                    onBack={() => navigate("/admin")}
+                  />
                 ) : null
               }
             />
@@ -3138,164 +2078,29 @@ export default function App() {
               path="/admin/orgs/:orgId"
               element={
                 role === "admin" ? (
-                  <section className="mx-auto mt-6 max-w-4xl">
-                    <Card className="space-y-6">
-                      <div className="flex flex-wrap items-center justify-between gap-4">
-                        <SectionHeading
-                          title={
-                            selectedAdminOrg
-                              ? `Manage ${selectedAdminOrg.name}`
-                              : "Organization settings"
-                          }
-                          subtitle="Update compliance details and subscription status."
-                        />
-                        <Button
-                          variant="ghost"
-                          onClick={() => navigate("/admin/orgs")}
-                        >
-                          Back to organizations
-                        </Button>
-                      </div>
-                      <div className="space-y-6">
-                        <div className="space-y-3">
-                          <p className="text-sm font-semibold text-sand-900">
-                            Organization details
-                          </p>
-                          <div className="grid gap-4 sm:grid-cols-2">
-                            <div className="space-y-2">
-                              <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                                Organization name
-                              </p>
-                              <Input
-                                placeholder="e.g., Omniform Labs"
-                                value={orgSettingsName}
-                                onChange={(event) =>
-                                  setOrgSettingsName(event.target.value)
-                                }
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                                Organization status
-                              </p>
-                              <Select
-                                value={orgSettingsStatus}
-                                onChange={(event) =>
-                                  setOrgSettingsStatus(event.target.value)
-                                }
-                              >
-                                <option value="active">active</option>
-                                <option value="inactive">inactive</option>
-                              </Select>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="space-y-3 border-t border-sand-200 pt-4">
-                          <p className="text-sm font-semibold text-sand-900">
-                            Compliance & identity
-                          </p>
-                          <div className="grid gap-4 sm:grid-cols-2">
-                            <div className="space-y-2">
-                              <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                                PAN number
-                              </p>
-                              <Input
-                                placeholder="Tax identifier"
-                                value={orgSettingsPanNumber}
-                                onChange={(event) =>
-                                  setOrgSettingsPanNumber(event.target.value)
-                                }
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                                License number
-                              </p>
-                              <Input
-                                placeholder="Regulatory license"
-                                value={orgSettingsLicenseNumber}
-                                onChange={(event) =>
-                                  setOrgSettingsLicenseNumber(event.target.value)
-                                }
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                                Location
-                              </p>
-                              <Input
-                                placeholder="City, country"
-                                value={orgSettingsLocation}
-                                onChange={(event) =>
-                                  setOrgSettingsLocation(event.target.value)
-                                }
-                              />
-                            </div>
-                          </div>
-                        </div>
-                        <div className="space-y-3 border-t border-sand-200 pt-4">
-                          <p className="text-sm font-semibold text-sand-900">
-                            Subscription
-                          </p>
-                          <div className="grid gap-4 sm:grid-cols-2">
-                            <div className="space-y-2">
-                              <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                                Subscription status
-                              </p>
-                              <Select
-                                value={orgSettingsSubscriptionStatus}
-                                onChange={(event) =>
-                                  setOrgSettingsSubscriptionStatus(event.target.value)
-                                }
-                              >
-                                <option value="active">active</option>
-                                <option value="canceled">canceled</option>
-                                <option value="expired">expired</option>
-                              </Select>
-                            </div>
-                            <div className="space-y-2">
-                              <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                                Start date
-                              </p>
-                              <Input
-                                type="date"
-                                value={orgSettingsSubscriptionStartsAt}
-                                onChange={(event) =>
-                                  setOrgSettingsSubscriptionStartsAt(
-                                    event.target.value
-                                  )
-                                }
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                                End date
-                              </p>
-                              <Input
-                                type="date"
-                                value={orgSettingsSubscriptionEndsAt}
-                                onChange={(event) =>
-                                  setOrgSettingsSubscriptionEndsAt(
-                                    event.target.value
-                                  )
-                                }
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-3">
-                        <Button onClick={handleSaveOrgSettings}>
-                          Save changes
-                        </Button>
-                        {orgSettingsMessage ? (
-                          <p className="text-sm text-sand-500">
-                            {orgSettingsMessage}
-                          </p>
-                        ) : null}
-                      </div>
-                    </Card>
-                  </section>
+                  <AdminOrganizationSettingsPage
+                    selectedAdminOrg={selectedAdminOrg}
+                    orgSettingsName={orgSettingsName}
+                    setOrgSettingsName={setOrgSettingsName}
+                    orgSettingsStatus={orgSettingsStatus}
+                    setOrgSettingsStatus={setOrgSettingsStatus}
+                    orgSettingsPanNumber={orgSettingsPanNumber}
+                    setOrgSettingsPanNumber={setOrgSettingsPanNumber}
+                    orgSettingsLicenseNumber={orgSettingsLicenseNumber}
+                    setOrgSettingsLicenseNumber={setOrgSettingsLicenseNumber}
+                    orgSettingsLocation={orgSettingsLocation}
+                    setOrgSettingsLocation={setOrgSettingsLocation}
+                    orgSettingsSubscriptionStatus={orgSettingsSubscriptionStatus}
+                    setOrgSettingsSubscriptionStatus={setOrgSettingsSubscriptionStatus}
+                    orgSettingsSubscriptionStartsAt={orgSettingsSubscriptionStartsAt}
+                    setOrgSettingsSubscriptionStartsAt={setOrgSettingsSubscriptionStartsAt}
+                    orgSettingsSubscriptionEndsAt={orgSettingsSubscriptionEndsAt}
+                    setOrgSettingsSubscriptionEndsAt={setOrgSettingsSubscriptionEndsAt}
+                    handleSaveOrgSettings={handleSaveOrgSettings}
+                    handleDeleteOrganization={handleDeleteOrganization}
+                    orgSettingsMessage={orgSettingsMessage}
+                    onBack={() => navigate("/admin/orgs")}
+                  />
                 ) : null
               }
             />
@@ -3303,381 +2108,22 @@ export default function App() {
               path="/admin/builder"
               element={
                 role === "admin" ? (
-                  <section
-                    className="mx-auto mt-6 min-h-[70vh] max-w-6xl"
-                    onClick={() => setComponentContextMenu(null)}
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-sand-200 bg-white px-4 py-3">
-                      <div className="flex flex-wrap items-center gap-3">
-                        <Button variant="ghost" onClick={handleLeaveBuilder}>
-                          Back to dashboard
-                        </Button>
-                        <p className="text-sm text-sand-500">
-                          Build and tag form components.
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap gap-3">
-                        <Button
-                          variant="secondary"
-                          onClick={() => setShowFormSave(true)}
-                        >
-                          Save form
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="mt-6 grid gap-6 lg:grid-cols-[260px_1fr]">
-                      <div className="flex min-h-[70vh] max-h-[70vh] flex-col space-y-4">
-                        <p className="text-xs uppercase tracking-[0.3em] text-sand-500">
-                          Components
-                        </p>
-                        <Input
-                          placeholder="Search components"
-                          value={componentSearch}
-                          onChange={(event) => setComponentSearch(event.target.value)}
-                        />
-                        <div
-                          className="grid flex-1 grid-cols-2 gap-2 overflow-y-auto pr-1"
-                          onDragOver={(event) => event.preventDefault()}
-                          onDrop={(event) => {
-                            event.preventDefault();
-                            if (!draggingComponentId) return;
-                            setFormComponents((prev) =>
-                              prev.filter((item) => item.id !== draggingComponentId)
-                            );
-                            setDraggingComponentId(null);
-                            setDropIndex(null);
-                          }}
-                        >
-                          <div
-                            className="flex aspect-square cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-sand-300 bg-sand-50 p-2 text-center text-[10px] text-sand-700"
-                            onClick={() => setShowCustomComponent(true)}
-                          >
-                            <Plus className="h-3.5 w-3.5 text-sand-900" />
-                            <span className="text-[9px] uppercase tracking-[0.2em]">
-                              Add new
-                            </span>
-                            <span className="text-[9px] uppercase tracking-[0.2em]">
-                              component
-                            </span>
-                          </div>
-                          {builderComponents
-                            .filter((component) => {
-                              const query = componentSearch.trim().toLowerCase();
-                              if (!query) return true;
-                              const haystack = `${component.label} ${component.type} ${
-                                component.tag
-                              }`
-                                .toLowerCase()
-                                .trim();
-                              if (haystack.includes(query)) return true;
-                              let qIndex = 0;
-                              for (let i = 0; i < haystack.length; i += 1) {
-                                if (haystack[i] === query[qIndex]) {
-                                  qIndex += 1;
-                                  if (qIndex === query.length) return true;
-                                }
-                              }
-                              return false;
-                            })
-                            .map((component) => (
-                              <div
-                                key={component.id}
-                                draggable
-                                  onClick={() => {
-                                    setFormComponents((prev) => [
-                                      ...prev,
-                                      {
-                                        id: `${component.type}-${Date.now()}`,
-                                        type: component.type,
-                                        label: component.label,
-                                        tag: component.tag || toProfileTag(component.label),
-                                        iconName: component.iconName,
-                                        required: false,
-                                        options: component.options || "",
-                                      },
-                                    ]);
-                                    setFormDraftTouchedAt(Date.now());
-                                  }}
-                                onContextMenu={(event) => {
-                                  if (!component.removable) return;
-                                  event.preventDefault();
-                                  setComponentContextMenu({
-                                    x: event.clientX,
-                                    y: event.clientY,
-                                    componentId: component.id,
-                                  });
-                                }}
-                                onDragStart={(event) => {
-                                  event.dataTransfer.setData(
-                                    "component",
-                                    JSON.stringify(component)
-                                  );
-                                }}
-                                className="flex aspect-square cursor-grab flex-col items-center justify-center gap-1 rounded-xl border border-sand-200 bg-white p-2 text-center text-[10px] text-sand-700"
-                              >
-                                {renderBuilderIcon(component.iconName)}
-                                <span className="text-[9px] uppercase tracking-[0.2em]">
-                                  {component.label}
-                                </span>
-                              </div>
-                            ))}
-                        </div>
-                      </div>
-                      <div
-                        onDragOver={(event) => event.preventDefault()}
-                        onDragEnter={() => setDropIndex(formComponents.length)}
-                        onDrop={(event) => {
-                          event.preventDefault();
-                          const payload = event.dataTransfer.getData("component");
-                          const insertAt =
-                            dropIndex === null ? formComponents.length : dropIndex;
-
-                          if (payload) {
-                            const component = JSON.parse(payload) as {
-                              type: string;
-                              label: string;
-                              tag?: string;
-                              iconName?: string;
-                              options?: string;
-                            };
-                            setFormComponents((prev) => {
-                              const nextItem = {
-                                id: `${component.type}-${Date.now()}`,
-                                type: component.type,
-                                label: component.label,
-                                tag: component.tag || toProfileTag(component.label),
-                                iconName: component.iconName,
-                                required: false,
-                                options: component.options || "",
-                              };
-                              const updated = [...prev];
-                              updated.splice(insertAt, 0, nextItem);
-                              return updated;
-                            });
-                            setFormDraftTouchedAt(Date.now());
-                          } else if (draggingComponentId) {
-                            setFormComponents((prev) => {
-                              const fromIndex = prev.findIndex(
-                                (item) => item.id === draggingComponentId
-                              );
-                              if (fromIndex === -1) return prev;
-                              const updated = [...prev];
-                              const [moved] = updated.splice(fromIndex, 1);
-                              const targetIndex =
-                                fromIndex < insertAt ? insertAt - 1 : insertAt;
-                              updated.splice(targetIndex, 0, moved);
-                              return updated;
-                            });
-                            setFormDraftTouchedAt(Date.now());
-                          }
-                          setDropIndex(null);
-                          setDraggingComponentId(null);
-                        }}
-                        className="min-h-[70vh] max-h-[70vh] overflow-y-auto rounded-3xl border border-dashed border-sand-300 bg-sand-50 p-6"
-                      >
-                        {formComponents.length ? (
-                          <div className="space-y-4">
-                            {formComponents.map((component, index) => (
-                              <div key={component.id} className="space-y-3">
-                                {dropIndex === index ? (
-                                  <div className="h-1 w-full rounded-full bg-sand-900" />
-                                ) : null}
-                                <div
-                                  draggable
-                                  onDragStart={(event) => {
-                                    event.dataTransfer.setData(
-                                      "reorder",
-                                      component.id
-                                    );
-                                    setDraggingComponentId(component.id);
-                                  }}
-                                  onDragEnd={() => {
-                                    setDraggingComponentId(null);
-                                    setDropIndex(null);
-                                  }}
-                                  onDragOver={(event) => {
-                                    event.preventDefault();
-                                    setDropIndex((prev) =>
-                                      prev === index ? prev : index
-                                    );
-                                  }}
-                                  className="rounded-2xl border border-sand-200 bg-white p-4"
-                                >
-                                  <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <div>
-                                      <div className="flex items-center gap-2">
-                                        {component.iconName ? (
-                                          <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-sand-200 bg-sand-50">
-                                            {component.iconName === "type" ? (
-                                              <Type className="h-3.5 w-3.5 text-sand-900" />
-                                            ) : component.iconName === "mail" ? (
-                                              <Mail className="h-3.5 w-3.5 text-sand-900" />
-                                            ) : component.iconName === "calendar" ? (
-                                              <Calendar className="h-3.5 w-3.5 text-sand-900" />
-                                            ) : component.iconName === "map-pin" ? (
-                                              <MapPin className="h-3.5 w-3.5 text-sand-900" />
-                                            ) : component.iconName === "phone" ? (
-                                              <Phone className="h-3.5 w-3.5 text-sand-900" />
-                                            ) : component.iconName === "id-card" ? (
-                                              <IdCard className="h-3.5 w-3.5 text-sand-900" />
-                                            ) : component.iconName === "image" ? (
-                                              <Image className="h-3.5 w-3.5 text-sand-900" />
-                                            ) : component.iconName === "file-text" ? (
-                                              <FileText className="h-3.5 w-3.5 text-sand-900" />
-                                            ) : component.iconName === "user" ? (
-                                              <User className="h-3.5 w-3.5 text-sand-900" />
-                                            ) : component.iconName === "shield" ? (
-                                              <Shield className="h-3.5 w-3.5 text-sand-900" />
-                                            ) : (
-                                              <BadgeCheck className="h-3.5 w-3.5 text-sand-900" />
-                                            )}
-                                          </span>
-                                        ) : null}
-                                        <p className="text-sm font-semibold text-sand-950">
-                                          {component.label || "Untitled field"}
-                                        </p>
-                                      </div>
-                                      <p className="text-xs text-sand-500">
-                                        Tag: {component.tag || "none"}
-                                      </p>
-                                    </div>
-                                    <div className="flex gap-2">
-                                      <Button
-                                        variant={
-                                          component.required ? "primary" : "ghost"
-                                        }
-                                        type="button"
-                                        onClick={() => {
-                                          setFormComponents((prev) =>
-                                            prev.map((item, idx) =>
-                                              idx === index
-                                                ? {
-                                                    ...item,
-                                                    required: !item.required,
-                                                  }
-                                                : item
-                                            )
-                                          );
-                                          setFormDraftTouchedAt(Date.now());
-                                        }}
-                                      >
-                                        {component.required ? "Required" : "Optional"}
-                                      </Button>
-                                      <Button
-                                        variant="ghost"
-                                        type="button"
-                                        onClick={() => {
-                                          setFormComponents((prev) =>
-                                            prev.filter((_, idx) => idx !== index)
-                                          );
-                                          setFormDraftTouchedAt(Date.now());
-                                        }}
-                                      >
-                                        Remove
-                                      </Button>
-                                    </div>
-                                  </div>
-                                </div>
-                                <div className="mt-3 rounded-2xl border border-dashed border-sand-200 bg-sand-50 p-3">
-                                  {component.type === "select" ? (
-                                    <p className="text-xs text-sand-500">
-                                      Select: {component.options || "No options"}
-                                    </p>
-                                  ) : component.type === "date" ? (
-                                    <p className="text-xs text-sand-500">Date picker</p>
-                                  ) : component.type === "email" ? (
-                                    <p className="text-xs text-sand-500">Email input</p>
-                                  ) : component.type === "image" ? (
-                                    <p className="text-xs text-sand-500">
-                                      Image upload
-                                    </p>
-                                  ) : (
-                                    <p className="text-xs text-sand-500">Text input</p>
-                                  )}
-                                </div>
-                                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                                  <Input
-                                    placeholder="Label"
-                                    value={component.label}
-                                    onChange={(event) => {
-                                      setFormComponents((prev) =>
-                                        prev.map((item, idx) =>
-                                          idx === index
-                                            ? { ...item, label: event.target.value }
-                                            : item
-                                        )
-                                      );
-                                      setFormDraftTouchedAt(Date.now());
-                                    }}
-                                  />
-                                  <Input
-                                    placeholder="Tag (maps to profile key)"
-                                    value={component.tag}
-                                    onChange={(event) => {
-                                      setFormComponents((prev) =>
-                                        prev.map((item, idx) =>
-                                          idx === index
-                                            ? { ...item, tag: event.target.value }
-                                            : item
-                                        )
-                                      );
-                                      setFormDraftTouchedAt(Date.now());
-                                    }}
-                                  />
-                                  <Select
-                                    value={component.type}
-                                    onChange={(event) => {
-                                      setFormComponents((prev) =>
-                                        prev.map((item, idx) =>
-                                          idx === index
-                                            ? { ...item, type: event.target.value }
-                                            : item
-                                        )
-                                      );
-                                      setFormDraftTouchedAt(Date.now());
-                                    }}
-                                  >
-                                    <option value="text">text</option>
-                                    <option value="email">email</option>
-                                    <option value="date">date</option>
-                                    <option value="number">number</option>
-                                    <option value="select">select</option>
-                                    <option value="image">image</option>
-                                  </Select>
-                                  <Input
-                                    placeholder="Options (comma)"
-                                    value={component.options}
-                                    onChange={(event) => {
-                                      setFormComponents((prev) =>
-                                        prev.map((item, idx) =>
-                                          idx === index
-                                            ? {
-                                                ...item,
-                                                options: event.target.value,
-                                              }
-                                            : item
-                                        )
-                                      );
-                                      setFormDraftTouchedAt(Date.now());
-                                    }}
-                                  />
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-sand-500">
-                            <p className="text-sm uppercase tracking-[0.2em]">
-                              Drop components here
-                            </p>
-                            <p className="text-base text-sand-700">
-                              Drag tiles or click them to build a form.
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </section>
+                  <AdminBuilderPage
+                    handleLeaveBuilder={handleLeaveBuilder}
+                    setShowFormSave={setShowFormSave}
+                    componentSearch={componentSearch}
+                    setComponentSearch={setComponentSearch}
+                    draggingComponentId={draggingComponentId}
+                    setDraggingComponentId={setDraggingComponentId}
+                    dropIndex={dropIndex}
+                    setDropIndex={setDropIndex}
+                    setShowCustomComponent={setShowCustomComponent}
+                    builderComponents={builderComponents}
+                    setComponentContextMenu={setComponentContextMenu}
+                    formComponents={formComponents}
+                    setFormComponents={setFormComponents}
+                    setFormDraftTouchedAt={setFormDraftTouchedAt}
+                  />
                 ) : null
               }
             />
@@ -3685,45 +2131,13 @@ export default function App() {
               path="/admin/manage"
               element={
                 role === "admin" ? (
-                  <section className="mx-auto mt-6 max-w-6xl">
-                    <Card className="space-y-6">
-                      <div className="flex flex-wrap items-center justify-between gap-4">
-                        <SectionHeading
-                          title="Manage forms"
-                          subtitle="Select an organization to see its templates."
-                        />
-                        <Button variant="ghost" onClick={() => navigate("/admin")}>
-                          Back to dashboard
-                        </Button>
-                      </div>
-                      <Input
-                        placeholder="Search organizations"
-                        value={manageOrgQuery}
-                        onChange={(event) => setManageOrgQuery(event.target.value)}
-                      />
-                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                        {filteredAdminOrgs.map((org) => (
-                          <Card key={org._id} className="space-y-2">
-                            <p className="text-lg font-semibold text-sand-950">
-                              {org.name}
-                            </p>
-                            <p className="text-sm text-sand-500">{org.slug}</p>
-                            <Button
-                              variant="secondary"
-                              onClick={() => handleOpenManageOrg(org)}
-                            >
-                              View forms
-                            </Button>
-                          </Card>
-                        ))}
-                        {!filteredAdminOrgs.length ? (
-                          <p className="text-sm text-sand-500">
-                            No organizations match that search.
-                          </p>
-                        ) : null}
-                      </div>
-                    </Card>
-                  </section>
+                  <AdminManageOrganizationsPage
+                    filteredAdminOrgs={filteredAdminOrgs}
+                    manageOrgQuery={manageOrgQuery}
+                    setManageOrgQuery={setManageOrgQuery}
+                    handleOpenManageOrg={handleOpenManageOrg}
+                    onBack={() => navigate("/admin")}
+                  />
                 ) : null
               }
             />
@@ -3731,75 +2145,17 @@ export default function App() {
               path="/admin/manage/forms"
               element={
                 role === "admin" ? (
-                  <section className="mx-auto mt-6 max-w-6xl">
-                    <Card className="space-y-6">
-                      <div className="flex flex-wrap items-center justify-between gap-4">
-                        <SectionHeading
-                          title={
-                            selectedManageOrg
-                              ? `Forms for ${selectedManageOrg.name}`
-                              : "Organization forms"
-                          }
-                          subtitle="Search and review every template."
-                        />
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            variant="ghost"
-                            onClick={() => navigate("/admin/manage")}
-                          >
-                            Back to organizations
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            onClick={() => navigate("/admin")}
-                          >
-                            Back to dashboard
-                          </Button>
-                        </div>
-                      </div>
-                      <Input
-                        placeholder="Search forms"
-                        value={manageFormQuery}
-                        onChange={(event) => setManageFormQuery(event.target.value)}
-                      />
-                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {filteredManageForms.map((form) => (
-                  <Card key={form._id} className="space-y-3">
-                    <div className="space-y-1">
-                      <p className="text-lg font-semibold text-sand-950">
-                        {form.name}
-                      </p>
-                      <p className="text-sm text-sand-500">
-                        {form.description || "No description"}
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        variant="secondary"
-                        onClick={() => handleEditManageForm(form)}
-                      >
-                        Edit form
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        onClick={() => handleDeleteManageForm(form)}
-                      >
-                        Delete form
-                      </Button>
-                    </div>
-                  </Card>
-                ))}
-                        {manageFormsLoading ? (
-                          <p className="text-sm text-sand-500">Loading forms...</p>
-                        ) : null}
-                        {!manageFormsLoading && !filteredManageForms.length ? (
-                          <p className="text-sm text-sand-500">
-                            No forms match that search.
-                          </p>
-                        ) : null}
-                      </div>
-                    </Card>
-                  </section>
+                  <AdminManageFormsPage
+                    selectedManageOrg={selectedManageOrg}
+                    manageFormQuery={manageFormQuery}
+                    setManageFormQuery={setManageFormQuery}
+                    filteredManageForms={filteredManageForms}
+                    handleEditManageForm={handleEditManageForm}
+                    handleDeleteManageForm={handleDeleteManageForm}
+                    manageFormsLoading={manageFormsLoading}
+                    onBackToOrganizations={() => navigate("/admin/manage")}
+                    onBackToDashboard={() => navigate("/admin")}
+                  />
                 ) : null
               }
             />
@@ -3807,176 +2163,25 @@ export default function App() {
               path="/org"
               element={
                 role === "organization" ? (
-                  <section className="mx-auto mt-10 max-w-6xl">
-                    <Card className="space-y-6">
-                      {orgMembership &&
-                      (membershipExpired ||
-                        orgMembership.subscriptionStatus !== "active") ? (
-                        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
-                          <p className="text-sm text-amber-900">
-                            Membership is {membershipStatus}. Your organization forms
-                            are hidden from users until renewal.
-                          </p>
-                        </div>
-                      ) : null}
-                      <SectionHeading
-                        title="Organization review"
-                        subtitle="Review submitted forms and accept or reject."
-                      />
-                      <Card className="space-y-4 border border-sand-200 bg-sand-50/60">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div>
-                            <p className="text-sm font-semibold text-sand-950">
-                              {orgMembership?.name || "Organization"}
-                            </p>
-                            {user?.primaryEmailAddress?.emailAddress ? (
-                              <p className="text-sm text-sand-500">
-                                {user.primaryEmailAddress.emailAddress}
-                              </p>
-                            ) : null}
-                            <p className="text-sm font-semibold text-sand-950">
-                              Membership status
-                            </p>
-                            <p className="text-sm text-sand-500">
-                              {membershipStatus}
-                              {orgMembership?.subscriptionStartsAt
-                                ? ` · Starts ${new Date(
-                                    orgMembership.subscriptionStartsAt
-                                  ).toLocaleDateString()}`
-                                : ""}
-                              {orgMembership?.subscriptionEndsAt
-                                ? ` · Ends ${new Date(
-                                    orgMembership.subscriptionEndsAt
-                                  ).toLocaleDateString()}`
-                                : ""}
-                            </p>
-                          </div>
-                          <Badge tone="neutral">
-                            {orgMembership?.subscriptionStatus || "unknown"}
-                          </Badge>
-                        </div>
-                      </Card>
-                      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
-                        <Select
-                          value={orgFormFilter}
-                          onChange={(event) => setOrgFormFilter(event.target.value)}
-                        >
-                          <option value="">All forms</option>
-                          {orgForms.map((form) => (
-                            <option key={form._id} value={form._id}>
-                              {form.name}
-                            </option>
-                          ))}
-                        </Select>
-                        <Input
-                          placeholder="Search by user email"
-                          value={orgSubmissionEmailQuery}
-                          onChange={(event) => {
-                            setOrgSubmissionEmailQuery(event.target.value);
-                            setOrgSubmissionPage(1);
-                          }}
-                        />
-                        <Select
-                          value={orgStatusFilter}
-                          onChange={(event) => setOrgStatusFilter(event.target.value)}
-                        >
-                          <option value="all">all</option>
-                          <option value="pending">pending</option>
-                          <option value="completed">accepted</option>
-                          <option value="rejected">rejected</option>
-                        </Select>
-                        <Button
-                          variant="secondary"
-                          onClick={() => {
-                            setOrgFormFilter("");
-                            setOrgStatusFilter("all");
-                            setOrgSubmissionEmailQuery("");
-                            setOrgSubmissionPage(1);
-                            loadOrgSubmissions("", "all", 1, "");
-                          }}
-                        >
-                          Reset
-                        </Button>
-                      </div>
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-sm text-sand-500">
-                          Showing {orgSubmissions.length} submissions
-                          {orgStatusFilter !== "all"
-                            ? ` · ${orgStatusFilter}`
-                            : ""}
-                        </p>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() =>
-                              setOrgSubmissionPage((prev) => Math.max(prev - 1, 1))
-                            }
-                            disabled={orgSubmissionPage <= 1}
-                          >
-                            Prev
-                          </Button>
-                          <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                            Page {orgSubmissionPage} of {orgSubmissionTotalPages}
-                          </p>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() =>
-                              setOrgSubmissionPage((prev) =>
-                                Math.min(prev + 1, orgSubmissionTotalPages)
-                              )
-                            }
-                            disabled={orgSubmissionPage >= orgSubmissionTotalPages}
-                          >
-                            Next
-                          </Button>
-                        </div>
-                      </div>
-                      <div className="space-y-4">
-                        {orgSubmissions.map((submission) => (
-                          <div
-                            key={submission._id}
-                            className="rounded-2xl border border-sand-200 bg-white p-4"
-                          >
-                            <div className="flex flex-wrap items-start justify-between gap-4">
-                              <div>
-                                <p className="text-lg font-semibold text-sand-950">
-                                  {typeof submission.formId === "string"
-                                    ? "Form"
-                                    : submission.formId?.name || "Form"}
-                                </p>
-                                <p className="text-sm text-sand-500">
-                                  Submitted {new Date(submission.createdAt).toLocaleString()}
-                                </p>
-                              </div>
-                              <StatusPill status={submission.status} />
-                            </div>
-                            <div className="mt-4 flex flex-wrap items-center gap-2">
-                              <Button
-                                variant="secondary"
-                                onClick={() =>
-                                  navigate(`/org/submissions/${submission._id}`)
-                                }
-                              >
-                                View
-                              </Button>
-                            </div>
-                          </div>
-                        ))}
-                        {!orgSubmissions.length ? (
-                          <p className="text-sm text-sand-500">
-                            No submissions yet.
-                          </p>
-                        ) : null}
-                      </div>
-                      {orgDashboardMessage ? (
-                        <p className="text-sm text-sand-500">
-                          {orgDashboardMessage}
-                        </p>
-                      ) : null}
-                    </Card>
-                  </section>
+                  <OrganizationDashboardPage
+                    orgMembership={orgMembership}
+                    membershipExpired={membershipExpired}
+                    membershipStatus={membershipStatus}
+                    orgFormFilter={orgFormFilter}
+                    setOrgFormFilter={setOrgFormFilter}
+                    orgForms={orgForms}
+                    orgSubmissionEmailQuery={orgSubmissionEmailQuery}
+                    setOrgSubmissionEmailQuery={setOrgSubmissionEmailQuery}
+                    setOrgSubmissionPage={setOrgSubmissionPage}
+                    orgStatusFilter={orgStatusFilter}
+                    setOrgStatusFilter={setOrgStatusFilter}
+                    loadOrgSubmissions={loadOrgSubmissions}
+                    orgSubmissions={orgSubmissions}
+                    orgSubmissionPage={orgSubmissionPage}
+                    orgSubmissionTotalPages={orgSubmissionTotalPages}
+                    orgDashboardMessage={orgDashboardMessage}
+                    navigateToSubmission={(id) => navigate(`/org/submissions/${id}`)}
+                  />
                 ) : null
               }
             />
@@ -3984,116 +2189,15 @@ export default function App() {
               path="/org/submissions/:submissionId"
               element={
                 role === "organization" ? (
-                  <section className="mx-auto mt-10 max-w-5xl">
-                    <Card className="space-y-6">
-                      <div className="flex flex-wrap items-center justify-between gap-4">
-                        <SectionHeading
-                          title={
-                            selectedOrgSubmission
-                              ? typeof selectedOrgSubmission.formId === "string"
-                                ? "Submission review"
-                                : selectedOrgSubmission.formId.name
-                              : "Submission review"
-                          }
-                          subtitle="Review form data and finalize a decision."
-                        />
-                        <Button
-                          variant="ghost"
-                          onClick={() => navigate("/org")}
-                        >
-                          Back to submissions
-                        </Button>
-                      </div>
-                      {selectedOrgSubmission ? (
-                        <div className="space-y-6">
-                          <div className="flex flex-wrap items-center gap-3">
-                            <StatusPill status={selectedOrgSubmission.status} />
-                            <p className="text-sm text-sand-500">
-                              Submitted{
-                              " " +
-                                new Date(
-                                  selectedOrgSubmission.createdAt
-                                ).toLocaleString()}
-                            </p>
-                          </div>
-                          {selectedOrgSubmission.data ? (
-                            <div className="grid gap-3 sm:grid-cols-2">
-                              {Object.entries(selectedOrgSubmission.data).map(
-                                ([key, value]) => (
-                                  <div
-                                    key={key}
-                                    className="rounded-2xl border border-sand-200 bg-white p-3"
-                                  >
-                                    <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                                      {key}
-                                    </p>
-                                    {renderSubmissionValue(
-                                      selectedOrgSubmission,
-                                      key,
-                                      String(value || "")
-                                    )}
-                                  </div>
-                                )
-                              )}
-                            </div>
-                          ) : (
-                            <p className="text-sm text-sand-500">
-                              No data submitted.
-                            </p>
-                          )}
-                          {orgDashboardMessage ? (
-                            <p className="text-sm text-sand-500">
-                              {orgDashboardMessage}
-                            </p>
-                          ) : null}
-                          {selectedOrgSubmission.status === "pending" ? (
-                            <div className="space-y-3">
-                              <Input
-                                placeholder="Add review notes"
-                                value={
-                                  orgReviewNotes[selectedOrgSubmission._id] || ""
-                                }
-                                onChange={(event) =>
-                                  setOrgReviewNotes((prev) => ({
-                                    ...prev,
-                                    [selectedOrgSubmission._id]: event.target.value,
-                                  }))
-                                }
-                              />
-                              <div className="flex flex-wrap gap-3">
-                                <Button
-                                  variant="secondary"
-                                  onClick={() =>
-                                    handleOrgDecision(
-                                      selectedOrgSubmission._id,
-                                      "accept"
-                                    )
-                                  }
-                                >
-                                  Accept
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  onClick={() =>
-                                    handleOrgDecision(
-                                      selectedOrgSubmission._id,
-                                      "reject"
-                                    )
-                                  }
-                                >
-                                  Reject
-                                </Button>
-                              </div>
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : (
-                        <p className="text-sm text-sand-500">
-                          {orgDashboardMessage || "Select a submission to review."}
-                        </p>
-                      )}
-                    </Card>
-                  </section>
+                  <OrganizationSubmissionReviewPage
+                    selectedOrgSubmission={selectedOrgSubmission}
+                    orgDashboardMessage={orgDashboardMessage}
+                    renderSubmissionValue={renderSubmissionValue}
+                    orgReviewNotes={orgReviewNotes}
+                    setOrgReviewNotes={setOrgReviewNotes}
+                    handleOrgDecision={handleOrgDecision}
+                    onBack={() => navigate("/org")}
+                  />
                 ) : null
               }
             />
@@ -4101,460 +2205,184 @@ export default function App() {
         ) : null}
 
         {showFormSave ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-            <div className="w-full max-w-lg rounded-3xl border border-sand-200 bg-white p-6 shadow-xl">
-              <div className="space-y-2">
-                <h3 className="text-xl font-semibold text-sand-950">
-                  {formId ? "Update form" : "Save form"}
-                </h3>
-                <p className="text-sm text-sand-500">
-                  Choose an organization and describe this form.
-                </p>
-              </div>
-              <div className="mt-4 space-y-3">
-                <ComboBox
-                  value={formOrgId}
-                  onChange={setFormOrgId}
-                  options={adminOrgs.map((org) => ({
-                    value: org._id,
-                    label: org.name,
-                  }))}
-                  placeholder="Search organization"
-                />
-                <Input
-                  placeholder="Form name"
-                  value={formName}
-                  onChange={(event) => setFormName(event.target.value)}
-                />
-                <Input
-                  placeholder="Form description"
-                  value={formDescription}
-                  onChange={(event) => setFormDescription(event.target.value)}
-                />
-              </div>
-              <div className="mt-6 flex flex-wrap gap-3">
-                <Button onClick={handleCreateForm}>
-                  {formId ? "Update form" : "Save form"}
-                </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => setShowFormSave(false)}
-                >
-                  Cancel
-                </Button>
-              </div>
-              {formMessage ? (
-                <p className="mt-3 text-sm text-sand-500">{formMessage}</p>
-              ) : null}
-            </div>
-          </div>
+          <FormSaveModal
+            formId={formId}
+            formOrgId={formOrgId}
+            setFormOrgId={setFormOrgId}
+            adminOrgs={adminOrgs}
+            formName={formName}
+            setFormName={setFormName}
+            formDescription={formDescription}
+            setFormDescription={setFormDescription}
+            handleCreateForm={handleCreateForm}
+            onCancel={() => setShowFormSave(false)}
+            formMessage={formMessage}
+          />
         ) : null}
 
         {showCooldownPrompt ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-            <div className="w-full max-w-md rounded-3xl border border-sand-200 bg-white p-6 shadow-xl">
-              <div className="space-y-2">
-                <p className="text-xs uppercase tracking-[0.3em] text-sand-500">
-                  Cooldown active
-                </p>
-                <h3 className="text-xl font-semibold text-sand-950">
-                  Please wait before resubmitting
-                </h3>
-                <p className="text-sm text-sand-500">
-                  {cooldownMessage}
-                </p>
-              </div>
-              <div className="mt-6 flex justify-end">
-                <Button
-                  variant="secondary"
-                  onClick={() => setShowCooldownPrompt(false)}
-                >
-                  Got it
-                </Button>
-              </div>
-            </div>
-          </div>
+          <CooldownPromptModal
+            cooldownMessage={cooldownMessage}
+            onClose={() => setShowCooldownPrompt(false)}
+          />
         ) : null}
 
         {showSavePrompt ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-            <div className="w-full max-w-3xl rounded-3xl border border-sand-200 bg-white p-6 shadow-xl">
-              <SectionHeading
-                title="Review before submit"
-                subtitle="Confirm your form entries. Optionally save selected values to your profile for future autofill."
-              />
-              <div className="mt-4 grid max-h-[50vh] gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
-                {saveCandidates.map((item) => (
-                  <label
-                    key={item.key}
-                    className="flex cursor-pointer items-start gap-3 rounded-2xl border border-sand-200 bg-white p-4"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={Boolean(selectedSaveCandidateKeys[item.key])}
-                      onChange={(event) =>
-                        setSelectedSaveCandidateKeys((prev) => ({
-                          ...prev,
-                          [item.key]: event.target.checked,
-                        }))
-                      }
-                    />
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                        {item.label}
-                      </p>
-                      <p className="text-xs text-sand-500">{item.key}</p>
-                      <p className="mt-2 text-base text-sand-950">{item.value}</p>
-                    </div>
-                  </label>
-                ))}
-                {!saveCandidates.length ? (
-                  <div className="rounded-2xl border border-sand-200 bg-white p-4 sm:col-span-2">
-                    <p className="text-sm text-sand-500">
-                      No new profile fields found. Submit when you are ready.
-                    </p>
-                  </div>
-                ) : null}
-              </div>
-              <div className="mt-6 flex flex-wrap gap-3">
-                <Button onClick={handleSaveMissing}>Save selected and submit</Button>
-                <Button variant="secondary" onClick={handleSubmitWithoutSaving}>
-                  Submit without saving
-                </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setShowSavePrompt(false);
-                    setSaveCandidates([]);
-                    setSelectedSaveCandidateKeys({});
-                    setPendingSubmissionData(null);
-                  }}
-                >
-                  Back to form
-                </Button>
-              </div>
-            </div>
-          </div>
+          <SavePromptModal
+            saveCandidates={saveCandidates}
+            selectedSaveCandidateKeys={selectedSaveCandidateKeys}
+            setSelectedSaveCandidateKeys={setSelectedSaveCandidateKeys}
+            handleSaveMissing={handleSaveMissing}
+            handleSubmitWithoutSaving={handleSubmitWithoutSaving}
+            onBack={() => {
+              setShowSavePrompt(false);
+              setSaveCandidates([]);
+              setSelectedSaveCandidateKeys({});
+              setPendingSubmissionData(null);
+            }}
+          />
         ) : null}
 
-
         {showCustomComponent ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-            <div className="w-full max-w-lg rounded-3xl border border-sand-200 bg-white p-6 shadow-xl">
-              <div className="flex items-start justify-between gap-4">
-                <div className="space-y-2">
-                  <h3 className="text-xl font-semibold text-sand-950">
-                    Add a new component
-                  </h3>
-                  <p className="text-sm text-sand-500">
-                    Define the input type, label, tag, and any options.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowCustomComponent(false)}
-                  className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-sand-200 text-sand-700 transition hover:border-sand-900 hover:text-sand-900"
-                  aria-label="Close"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <Select
-                  value={tagTemplateId}
-                  onChange={(event) => {
-                    const nextTemplateId = event.target.value;
-                    setTagTemplateId(nextTemplateId);
-                    const selectedTemplate = adminTags.find(
-                      (item) => item._id === nextTemplateId
-                    );
-                    if (!selectedTemplate) return;
-                    setCustomComponent((prev) => ({
-                      ...prev,
-                      label: selectedTemplate.label,
-                      tag: selectedTemplate.tag,
-                      type: selectedTemplate.type,
-                      options: (selectedTemplate.options || []).join(", "),
-                    }));
-                  }}
-                  className="sm:col-span-2"
-                >
-                  <option value="">Use saved tag template (optional)</option>
-                  {adminTags.map((item) => (
-                    <option key={item._id} value={item._id}>
-                      {item.label} ({item.tag})
-                    </option>
-                  ))}
-                </Select>
-                <Input
-                  placeholder="Label"
-                  value={customComponent.label}
-                  onChange={(event) =>
-                    setCustomComponent((prev) => ({
-                      ...prev,
-                      label: event.target.value,
-                    }))
-                  }
-                />
-                <Input
-                  placeholder="Tag (maps to profile key)"
-                  value={customComponent.tag}
-                  onChange={(event) =>
-                    setCustomComponent((prev) => ({
-                      ...prev,
-                      tag: event.target.value,
-                    }))
-                  }
-                />
-                <Select
-                  value={customComponent.type}
-                  onChange={(event) =>
-                    setCustomComponent((prev) => ({
-                      ...prev,
-                      type: event.target.value,
-                    }))
-                  }
-                >
-                  <option value="text">text</option>
-                  <option value="email">email</option>
-                  <option value="date">date</option>
-                  <option value="number">number</option>
-                  <option value="select">select</option>
-                  <option value="image">image</option>
-                </Select>
-                <Input
-                  placeholder={
-                    customComponent.type === "image"
-                      ? "Accepted formats (e.g., jpg,png)"
-                      : "Options (comma)"
-                  }
-                  value={customComponent.options}
-                  onChange={(event) =>
-                    setCustomComponent((prev) => ({
-                      ...prev,
-                      options: event.target.value,
-                    }))
-                  }
-                />
-              </div>
-              <div className="mt-4 grid grid-cols-4 gap-2">
-                {[
-                  { name: "type", Icon: Type },
-                  { name: "mail", Icon: Mail },
-                  { name: "calendar", Icon: Calendar },
-                  { name: "map-pin", Icon: MapPin },
-                  { name: "phone", Icon: Phone },
-                  { name: "id-card", Icon: IdCard },
-                  { name: "image", Icon: Image },
-                  { name: "file-text", Icon: FileText },
-                  { name: "user", Icon: User },
-                  { name: "shield", Icon: Shield },
-                  { name: "badge-check", Icon: BadgeCheck },
-                ]
-                  .map((icon) => (
-                    <button
-                      key={icon.name}
-                      type="button"
-                      onClick={() =>
-                        setCustomComponent((prev) => ({
-                          ...prev,
-                          iconName: icon.name,
-                        }))
-                      }
-                      className={`flex items-center justify-center rounded-2xl border p-2 ${
-                        customComponent.iconName === icon.name
-                          ? "border-sand-900"
-                          : "border-sand-200"
-                      }`}
-                    >
-                      <icon.Icon className="h-4 w-4 text-sand-900" />
-                    </button>
-                  ))}
-              </div>
-              <div className="mt-6 flex flex-wrap gap-3">
-                <Button
-                  onClick={() => {
-                    if (!customComponent.label.trim()) return;
-                    const nextTag =
-                      customComponent.tag || toProfileTag(customComponent.label);
-                    setFormComponents((prev) => [
-                      ...prev,
-                      {
-                        id: `custom-${Date.now()}`,
-                        type: customComponent.type,
-                        label: customComponent.label,
-                        tag: nextTag,
-                        iconName: customComponent.iconName,
-                        required: customComponent.required,
-                        options: customComponent.options,
-                      },
-                    ]);
-                    const shouldSaveForFuture = window.confirm(
-                      "Save this component to the reusable component list for future use?"
-                    );
-                    if (shouldSaveForFuture) {
-                      const templateId = `custom-template-${Date.now()}`;
-                      setSavedCustomComponents((prev) => [
-                        ...prev,
-                        {
-                          id: templateId,
-                          type: customComponent.type,
-                          label: customComponent.label,
-                          tag: nextTag,
-                          iconName: customComponent.iconName,
-                          options: customComponent.options,
-                          removable: true,
-                        },
-                      ]);
-                    }
-                    setFormDraftTouchedAt(Date.now());
-                    setCustomComponent({
-                      label: "",
-                      type: "text",
-                      tag: "",
-                      iconName: "type",
-                      required: false,
-                      options: "",
-                    });
-                    setTagTemplateId("");
-                    setShowCustomComponent(false);
-                  }}
-                >
-                  Add component
-                </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setTagTemplateId("");
-                    setShowCustomComponent(false);
-                  }}
-                >
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          </div>
+          <CustomComponentModal
+            customComponent={customComponent}
+            setCustomComponent={setCustomComponent}
+            onAddComponent={async () => {
+              if (!customComponent.label.trim()) return;
+              const cleanLabel = customComponent.label.trim();
+              const nextTag = toProfileTag(cleanLabel);
+              const normalizedType = coerceTagType(customComponent.type.trim() || "text");
+              const normalizedOptions = splitComponentOptions(customComponent.options);
+
+              if (nextTag) {
+                try {
+                  await upsertSystemTag({
+                    label: cleanLabel,
+                    tag: nextTag,
+                    type: normalizedType,
+                    options: normalizedOptions,
+                  });
+                } catch (error) {
+                  setFormMessage(
+                    error instanceof Error
+                      ? error.message
+                      : "Failed to auto-create tag."
+                  );
+                }
+              }
+
+              setFormComponents((prev) => [
+                ...prev,
+                {
+                  id: `custom-${Date.now()}`,
+                  type: normalizedType,
+                  label: cleanLabel,
+                  tag: nextTag,
+                  iconName: customComponent.iconName,
+                  required: customComponent.required,
+                  options: normalizedOptions.join(", "),
+                },
+              ]);
+              setPendingReusableComponent({
+                id: `custom-template-${Date.now()}`,
+                type: normalizedType,
+                label: cleanLabel,
+                tag: nextTag,
+                iconName: customComponent.iconName,
+                options: normalizedOptions.join(", "),
+                removable: true,
+              });
+              setFormDraftTouchedAt(Date.now());
+              setCustomComponent({
+                label: "",
+                type: "text",
+                tag: "",
+                iconName: "type",
+                required: false,
+                options: "",
+              });
+              setShowCustomComponent(false);
+            }}
+            onClose={() => {
+              setShowCustomComponent(false);
+            }}
+          />
+        ) : null}
+
+        {pendingReusableComponent ? (
+          <SaveReusableComponentModal
+            componentLabel={pendingReusableComponent.label}
+            onSave={() => {
+              setSavedCustomComponents((prev) => [
+                ...prev,
+                pendingReusableComponent,
+              ]);
+              setPendingReusableComponent(null);
+            }}
+            onSkip={() => setPendingReusableComponent(null)}
+          />
         ) : null}
 
         {componentContextMenu ? (
-          <div
-            className="fixed z-50 min-w-[160px] rounded-xl border border-sand-200 bg-white p-1 shadow-lg"
-            style={{
-              left: componentContextMenu.x,
-              top: componentContextMenu.y,
+          <ComponentContextMenu
+            x={componentContextMenu.x}
+            y={componentContextMenu.y}
+            onDelete={() => {
+              setSavedCustomComponents((prev) =>
+                prev.filter((item) => item.id !== componentContextMenu.componentId)
+              );
+              setComponentContextMenu(null);
             }}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <button
-              type="button"
-              className="w-full rounded-lg px-3 py-2 text-left text-sm text-rose-700 hover:bg-rose-50"
-              onClick={() => {
-                setSavedCustomComponents((prev) =>
-                  prev.filter((item) => item.id !== componentContextMenu.componentId)
-                );
-                setComponentContextMenu(null);
-              }}
-            >
-              Delete component
-            </button>
-          </div>
+          />
         ) : null}
 
       </main>
+
+      {!showLanding && appReady && user && role === "user" && !showOnboarding ? (
+        <nav className="fixed inset-x-0 bottom-0 z-40 px-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] pt-2 sm:hidden">
+          <div className="mx-auto grid max-w-md grid-cols-3 rounded-2xl border border-sand-200 bg-white/95 p-1 shadow-lg backdrop-blur">
+            <button
+              type="button"
+              className={`inline-flex h-10 items-center justify-center rounded-xl transition ${
+                location.pathname === "/"
+                  ? "bg-sand-100 text-sand-950"
+                  : "text-sand-700 hover:bg-sand-100"
+              }`}
+              onClick={() => navigate("/")}
+              aria-label="My Forms"
+            >
+              <Home className="h-5 w-5 shrink-0" />
+              <span className="sr-only">My Forms</span>
+            </button>
+            <button
+              type="button"
+              className={`inline-flex h-10 items-center justify-center rounded-xl transition ${
+                location.pathname === "/search"
+                  ? "bg-sand-100 text-sand-950"
+                  : "text-sand-700 hover:bg-sand-100"
+              }`}
+              onClick={() => navigate("/search")}
+              aria-label="Search Forms"
+            >
+              <Search className="h-5 w-5 shrink-0" />
+              <span className="sr-only">Search Forms</span>
+            </button>
+            <button
+              type="button"
+              className={`inline-flex h-10 items-center justify-center rounded-xl transition ${
+                location.pathname === "/profile"
+                  ? "bg-sand-100 text-sand-950"
+                  : "text-sand-700 hover:bg-sand-100"
+              }`}
+              onClick={() => navigate("/profile")}
+              aria-label="Profile"
+            >
+              <User className="h-5 w-5 shrink-0" />
+              <span className="sr-only">Profile</span>
+            </button>
+          </div>
+        </nav>
+      ) : null}
     </div>
   );
 }
-
-const LandingPage = () => (
-  <div className="min-h-screen bg-white">
-    <header className="px-6 py-6 sm:px-10">
-      <nav className="mx-auto flex max-w-6xl items-center justify-between">
-        <div className="space-y-1">
-          <p className="text-sm uppercase tracking-[0.2em] text-sand-500">
-            Omniform
-          </p>
-          <h1 className="text-2xl font-semibold text-sand-950 sm:text-3xl">
-            End the data tax
-          </h1>
-        </div>
-        <div className="flex items-center gap-3">
-          <SignInButton>
-            <Button size="sm">Sign in</Button>
-          </SignInButton>
-        </div>
-      </nav>
-    </header>
-
-    <main className="px-6 pb-16 sm:px-10">
-      <section className="mx-auto grid max-w-6xl gap-8 lg:grid-cols-[1.1fr_0.9fr]">
-        <div className="space-y-6">
-          <p className="text-xs uppercase tracking-[0.4em] text-sand-500">
-            Creative Clash 2026
-          </p>
-          <h2 className="text-4xl font-semibold text-sand-950 sm:text-5xl">
-            One profile. Every form. Zero retyping.
-          </h2>
-          <p className="text-base text-sand-700 sm:text-lg">
-            Omniform keeps your core details secure and ready. Sign in once and
-            reuse your profile whenever you need to submit a form.
-          </p>
-          <div className="flex flex-wrap gap-3">
-            <SignInButton>
-              <Button size="lg">Start filling</Button>
-            </SignInButton>
-            <Button variant="secondary" size="lg">
-              See how it works
-            </Button>
-          </div>
-          <div className="flex flex-wrap gap-6 text-sm text-sand-500">
-            <span>Secure by design</span>
-            <span>Role-based access</span>
-            <span>Built for banks, clinics, campuses</span>
-          </div>
-        </div>
-        <div className="grid gap-4">
-          <Card className="space-y-3">
-            <p className="text-xs uppercase tracking-[0.3em] text-sand-500">
-              Live forms
-            </p>
-            <p className="text-xl font-semibold text-sand-950">
-              Organizations publish, users fill
-            </p>
-            <p className="text-sm text-sand-500">
-              Drag-and-drop form builder for admins, clean review flow for
-              organizations.
-            </p>
-          </Card>
-          <Card className="space-y-3">
-            <p className="text-xs uppercase tracking-[0.3em] text-sand-500">
-              Autofill intelligence
-            </p>
-            <p className="text-xl font-semibold text-sand-950">
-              Tags map to your profile
-            </p>
-            <p className="text-sm text-sand-500">
-              Each field is tagged to your saved info, with prompts to save
-              missing details.
-            </p>
-          </Card>
-        </div>
-      </section>
-
-      <section className="mx-auto mt-12 max-w-6xl">
-        <Card className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-          <div className="space-y-2">
-            <p className="text-xs uppercase tracking-[0.3em] text-sand-500">
-              Ready to stop retyping?
-            </p>
-            <h3 className="text-2xl font-semibold text-sand-950">
-              Sign in and build your profile once.
-            </h3>
-          </div>
-          <SignInButton>
-            <Button size="lg">Get started</Button>
-          </SignInButton>
-        </Card>
-      </section>
-    </main>
-  </div>
-);

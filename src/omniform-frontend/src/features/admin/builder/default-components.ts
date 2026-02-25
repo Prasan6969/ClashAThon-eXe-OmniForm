@@ -1,0 +1,58 @@
+import type { BuilderPaletteComponent } from "../../../types/app";
+
+export const defaultBuilderComponents: BuilderPaletteComponent[] = [
+  {
+    id: "core-full-name",
+    type: "text",
+    label: "Full name",
+    tag: "fullName",
+    iconName: "type",
+    options: "",
+    removable: false,
+  },
+  {
+    id: "core-work-email",
+    type: "email",
+    label: "Work email",
+    tag: "workEmail",
+    iconName: "mail",
+    options: "",
+    removable: false,
+  },
+  {
+    id: "core-personal-email",
+    type: "email",
+    label: "Personal email",
+    tag: "personalEmail",
+    iconName: "mail",
+    options: "",
+    removable: false,
+  },
+  {
+    id: "core-address",
+    type: "text",
+    label: "Address",
+    tag: "address",
+    iconName: "map-pin",
+    options: "",
+    removable: false,
+  },
+  {
+    id: "core-phone",
+    type: "text",
+    label: "Phone",
+    tag: "phone",
+    iconName: "phone",
+    options: "",
+    removable: false,
+  },
+  {
+    id: "core-citizenship",
+    type: "text",
+    label: "Citizenship",
+    tag: "citizenshipNumber",
+    iconName: "id-card",
+    options: "",
+    removable: false,
+  },
+];

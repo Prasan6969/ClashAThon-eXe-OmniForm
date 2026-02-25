@@ -2,6 +2,7 @@ const express = require("express");
 const { clerkClient } = require("@clerk/express");
 const Organization = require("../models/Organization");
 const Form = require("../models/Form");
+const Submission = require("../models/Submission");
 const ProfileTag = require("../models/ProfileTag");
 const { requireRole } = require("../middleware/auth");
 const {
@@ -255,6 +256,41 @@ router.put("/orgs/:orgId", requireRole("admin"), async (req, res) => {
     return res.json({ data: org });
   } catch (error) {
     return res.status(500).json({ error: "Failed to update organization" });
+  }
+});
+
+router.delete("/orgs/:orgId", requireRole("admin"), async (req, res) => {
+  try {
+    const { orgId } = req.params;
+
+    if (!isValidObjectId(orgId)) {
+      return res.status(400).json({ error: "Invalid organization ID" });
+    }
+
+    const organization = await Organization.findById(orgId).select("_id name");
+    if (!organization) {
+      return res.status(404).json({ error: "Organization not found" });
+    }
+
+    const forms = await Form.find({ organizationId: orgId }).select("_id");
+    const formIds = forms.map((item) => item._id);
+
+    if (formIds.length) {
+      await Submission.deleteMany({ formId: { $in: formIds } });
+    }
+
+    await Submission.deleteMany({ organizationId: orgId });
+    await Form.deleteMany({ organizationId: orgId });
+    await Organization.findByIdAndDelete(orgId);
+
+    return res.json({
+      data: {
+        orgId,
+        name: organization.name,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to delete organization" });
   }
 });
 
