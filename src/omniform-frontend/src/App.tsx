@@ -15,7 +15,17 @@ import { Select } from "./components/ui/select";
 import { SectionHeading } from "./components/ui/section-heading";
 import { StatusPill } from "./components/ui/status-pill";
 import {
+  buildAutofillPayload,
+  collectUnsavedCandidates,
+  ensureProfileCustomKeys,
+  mapSubmissionData,
+  mergeCandidatesIntoProfile,
+  toProfileTag,
+} from "./utils/profile-autofill";
+import type { SaveCandidate } from "./utils/profile-autofill";
+import {
   BadgeCheck,
+  Calendar,
   FileText,
   IdCard,
   Image,
@@ -90,6 +100,9 @@ type Profile = {
   citizenshipNumber?: string;
   profilePhotoUrl?: string;
   citizenshipPhotoUrl?: string;
+  citizenshipFrontPhotoUrl?: string;
+  citizenshipBackPhotoUrl?: string;
+  customFields?: Record<string, string>;
 };
 
 type View = "user" | "profile" | "admin" | "org";
@@ -208,9 +221,14 @@ export default function App() {
   const [showSavePrompt, setShowSavePrompt] = useState(false);
   const [showCooldownPrompt, setShowCooldownPrompt] = useState(false);
   const [cooldownMessage, setCooldownMessage] = useState("");
-  const [saveCandidates, setSaveCandidates] = useState<
-    Array<{ key: string; value: string }>
-  >([]);
+  const [saveCandidates, setSaveCandidates] = useState<SaveCandidate[]>([]);
+  const [selectedSaveCandidateKeys, setSelectedSaveCandidateKeys] = useState<
+    Record<string, boolean>
+  >({});
+  const [pendingSubmissionData, setPendingSubmissionData] = useState<
+    Record<string, string> | null
+  >(null);
+  const [uploadingImageTarget, setUploadingImageTarget] = useState("");
   const [profileDraft, setProfileDraft] = useState<Profile>({
     fullName: "",
     workEmail: "",
@@ -220,6 +238,9 @@ export default function App() {
     citizenshipNumber: "",
     profilePhotoUrl: "",
     citizenshipPhotoUrl: "",
+    citizenshipFrontPhotoUrl: "",
+    citizenshipBackPhotoUrl: "",
+    customFields: {},
   });
   const [profileMessage, setProfileMessage] = useState("");
   const [view, setView] = useState<View>("user");
@@ -292,6 +313,87 @@ export default function App() {
       throw new Error(payload.error || "Request failed");
     }
     return payload;
+  };
+
+  const uploadToImageKit = async (file: File, folder: string) => {
+    const authPayload = await authedFetch("/api/uploads/imagekit-auth");
+    const auth = authPayload?.data;
+
+    if (!auth?.token || !auth?.signature || !auth?.expire || !auth?.publicKey) {
+      throw new Error("Image upload auth failed");
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("fileName", file.name || `upload-${Date.now()}`);
+    formData.append("token", String(auth.token));
+    formData.append("signature", String(auth.signature));
+    formData.append("expire", String(auth.expire));
+    formData.append("publicKey", String(auth.publicKey));
+    formData.append("folder", folder);
+    formData.append("useUniqueFileName", "true");
+
+    const uploadResponse = await fetch("https://upload.imagekit.io/api/v1/files/upload", {
+      method: "POST",
+      body: formData,
+    });
+
+    const uploadPayload = await uploadResponse.json().catch(() => ({}));
+    if (!uploadResponse.ok) {
+      throw new Error(uploadPayload?.message || "Image upload failed");
+    }
+
+    const uploadedUrl = uploadPayload?.url || "";
+    if (!uploadedUrl) {
+      throw new Error("Image upload returned no URL");
+    }
+
+    return uploadedUrl as string;
+  };
+
+  const handleProfileImageUpload = async (
+    field:
+      | "profilePhotoUrl"
+      | "citizenshipFrontPhotoUrl"
+      | "citizenshipBackPhotoUrl",
+    file?: File
+  ) => {
+    if (!file) return;
+    try {
+      setProfileMessage("");
+      setUploadingImageTarget(field);
+      const uploadedUrl = await uploadToImageKit(file, "/omniform/profile-documents");
+      setProfileDraft((prev) => ({
+        ...prev,
+        [field]: uploadedUrl,
+      }));
+      setProfileMessage("Image uploaded. Save profile to persist changes.");
+    } catch (error) {
+      setProfileMessage(
+        error instanceof Error ? error.message : "Image upload failed."
+      );
+    } finally {
+      setUploadingImageTarget("");
+    }
+  };
+
+  const handleFormImageUpload = async (fieldKey: string, file?: File) => {
+    if (!file) return;
+    try {
+      setSubmitMessage("");
+      setUploadingImageTarget(`form:${fieldKey}`);
+      const uploadedUrl = await uploadToImageKit(file, "/omniform/form-submissions");
+      setFormValues((prev) => ({
+        ...prev,
+        [fieldKey]: uploadedUrl,
+      }));
+    } catch (error) {
+      setSubmitMessage(
+        error instanceof Error ? error.message : "Image upload failed."
+      );
+    } finally {
+      setUploadingImageTarget("");
+    }
   };
 
   const handleCreateOrg = async () => {
@@ -374,7 +476,10 @@ export default function App() {
           id: component.id,
           type: component.type.trim() || "text",
           label: component.label.trim(),
-          tag: component.tag.trim() || undefined,
+          tag:
+            component.tag.trim() ||
+            toProfileTag(component.label.trim()) ||
+            undefined,
           required: component.required,
           options: component.options
             ? component.options.split(",").map((option) => option.trim())
@@ -737,20 +842,6 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [isLoaded, user, role, selectedManageOrg, manageFormQuery]);
 
-  const buildAutofillPayload = (form: Form) => {
-    const data: Record<string, string> = {};
-    const components = form.components || form.fields || [];
-    components.forEach((field, index) => {
-      const fieldKey = field.id || field.tag || `field-${index}`;
-      const tagKey = field.tag || field.id;
-      const value = tagKey
-        ? (profileDraft as Record<string, string | undefined>)[tagKey]
-        : "";
-      data[fieldKey] = value || "";
-    });
-    return data;
-  };
-
   const openForm = async (form: Form) => {
     const submission = submissions.find((item) => {
       if (typeof item.formId === "string") return item.formId === form._id;
@@ -778,6 +869,7 @@ export default function App() {
       );
       const fullForm = payload.data || form;
       setActiveForm(fullForm);
+      setProfileDraft((prev) => ensureProfileCustomKeys(prev, fullForm));
       const components = fullForm.components || fullForm.fields || [];
       const initialValues = components.reduce<Record<string, string>>(
         (acc, field, index) => {
@@ -802,9 +894,45 @@ export default function App() {
 
   const handleAutofill = () => {
     if (!activeForm) return;
-    const autofilled = buildAutofillPayload(activeForm);
+    const autofilled = buildAutofillPayload(activeForm, profileDraft);
     setFormValues((prev) => ({ ...prev, ...autofilled }));
     setFormErrors({});
+  };
+
+  const completeSubmission = async (
+    data: Record<string, string>,
+    profileOverride?: Profile
+  ) => {
+    if (!selectedOrg || !activeForm) return;
+
+    if (profileOverride) {
+      const profilePayload = await authedFetch("/api/profile/me", {
+        method: "PUT",
+        body: JSON.stringify(profileOverride),
+      });
+      setProfile(profilePayload.data || null);
+      setProfileDraft((profilePayload.data as Profile) || profileOverride);
+    }
+
+    await authedFetch("/api/submissions", {
+      method: "POST",
+      body: JSON.stringify({
+        organizationId: selectedOrg._id,
+        formId: activeForm._id,
+        data,
+      }),
+    });
+
+    setSubmitMessage("Submitted successfully.");
+    setActiveForm(null);
+    setShowSavePrompt(false);
+    setSaveCandidates([]);
+    setSelectedSaveCandidateKeys({});
+    setPendingSubmissionData(null);
+    navigate("/");
+
+    const payload = await authedFetch("/api/submissions/me");
+    setSubmissions(payload.data || []);
   };
 
   const handleSubmitForm = async () => {
@@ -827,43 +955,18 @@ export default function App() {
         setSubmitMessage("Please complete required fields.");
         return;
       }
-      const data = components.reduce<Record<string, string>>((acc, field, index) => {
-        const fieldKey = field.id || field.tag || `field-${index}`;
-        const dataKey = field.tag || field.id || fieldKey;
-        acc[dataKey] = formValues[fieldKey] || "";
-        return acc;
-      }, {});
-      await authedFetch("/api/submissions", {
-        method: "POST",
-        body: JSON.stringify({
-          organizationId: selectedOrg._id,
-          formId: activeForm._id,
-          data,
-        }),
-      });
-      setSubmitMessage("Submitted successfully.");
-      const profileKeys: Array<keyof Profile> = [
-        "fullName",
-        "workEmail",
-        "personalEmail",
-        "address",
-        "phone",
-        "citizenshipNumber",
-        "profilePhotoUrl",
-        "citizenshipPhotoUrl",
-      ];
-      const candidates = profileKeys
-        .filter((key) => !profileDraft[key] && data[key as string])
-        .map((key) => ({ key, value: data[key as string] }));
-      if (candidates.length) {
-        setSaveCandidates(candidates);
-        setShowSavePrompt(true);
-      } else {
-        setActiveForm(null);
-        navigate("/");
-      }
-      const payload = await authedFetch("/api/submissions/me");
-      setSubmissions(payload.data || []);
+      const data = mapSubmissionData(activeForm, formValues);
+      const candidates = collectUnsavedCandidates(activeForm, formValues, profileDraft);
+
+      setPendingSubmissionData(data);
+      setSaveCandidates(candidates);
+      setSelectedSaveCandidateKeys(
+        candidates.reduce<Record<string, boolean>>((acc, item) => {
+          acc[item.key] = true;
+          return acc;
+        }, {})
+      );
+      setShowSavePrompt(true);
     } catch (error) {
       setSubmitMessage(
         error instanceof Error ? error.message : "Submission failed."
@@ -882,6 +985,19 @@ export default function App() {
     } catch (error) {
       setSubmitMessage(
         error instanceof Error ? error.message : "Failed to cancel submission."
+      );
+    }
+  };
+
+  const handleViewUserSubmission = async (submissionId: string) => {
+    try {
+      setSubmitMessage("");
+      const payload = await authedFetch(`/api/submissions/me/${submissionId}`);
+      setSelectedUserSubmission(payload.data || null);
+      navigate(`/submissions/${submissionId}`);
+    } catch (error) {
+      setSubmitMessage(
+        error instanceof Error ? error.message : "Failed to load submission."
       );
     }
   };
@@ -913,6 +1029,7 @@ export default function App() {
         }),
       });
       setProfile(payload.data || null);
+      setProfileDraft((payload.data as Profile) || profileDraft);
       setProfileMessage("Profile saved.");
     } catch (error) {
       setProfileMessage(
@@ -947,15 +1064,15 @@ export default function App() {
   };
 
   const handleSaveMissing = async () => {
-    const updates = saveCandidates.reduce<Profile>((acc, item) => {
-      acc[item.key as keyof Profile] = item.value;
-      return acc;
-    }, {} as Profile);
-    setProfileDraft((prev) => ({ ...prev, ...updates }));
-    await handleProfileSave();
-    setShowSavePrompt(false);
-    setActiveForm(null);
-    setSaveCandidates([]);
+    if (!pendingSubmissionData) return;
+    const selected = saveCandidates.filter((item) => selectedSaveCandidateKeys[item.key]);
+    const profileToSave = mergeCandidatesIntoProfile(profileDraft, selected);
+    await completeSubmission(pendingSubmissionData, profileToSave);
+  };
+
+  const handleSubmitWithoutSaving = async () => {
+    if (!pendingSubmissionData) return;
+    await completeSubmission(pendingSubmissionData);
   };
 
   useEffect(() => {
@@ -1089,6 +1206,13 @@ export default function App() {
           citizenshipNumber: profilePayload?.data?.citizenshipNumber || "",
           profilePhotoUrl: profilePayload?.data?.profilePhotoUrl || "",
           citizenshipPhotoUrl: profilePayload?.data?.citizenshipPhotoUrl || "",
+          citizenshipFrontPhotoUrl:
+            profilePayload?.data?.citizenshipFrontPhotoUrl ||
+            profilePayload?.data?.citizenshipPhotoUrl ||
+            "",
+          citizenshipBackPhotoUrl:
+            profilePayload?.data?.citizenshipBackPhotoUrl || "",
+          customFields: profilePayload?.data?.customFields || {},
         });
         const hasBasics =
           profilePayload?.data?.fullName &&
@@ -1572,26 +1696,101 @@ export default function App() {
                             }))
                           }
                         />
-                        <Input
-                          placeholder="Profile photo (placeholder)"
-                          value={profileDraft.profilePhotoUrl || ""}
-                          onChange={(event) =>
-                            setProfileDraft((prev) => ({
-                              ...prev,
-                              profilePhotoUrl: event.target.value,
-                            }))
-                          }
-                        />
-                        <Input
-                          placeholder="Citizenship photo (placeholder)"
-                          value={profileDraft.citizenshipPhotoUrl || ""}
-                          onChange={(event) =>
-                            setProfileDraft((prev) => ({
-                              ...prev,
-                              citizenshipPhotoUrl: event.target.value,
-                            }))
-                          }
-                        />
+                      </div>
+                      <div className="space-y-4">
+                        <label className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
+                          <p className="text-sm font-semibold text-sand-900">Profile photo</p>
+                          <p className="mt-1 text-xs text-sand-500">
+                            {profileDraft.profilePhotoUrl
+                              ? "Update image"
+                              : "Browse files"}
+                          </p>
+                          <input
+                            className="hidden"
+                            type="file"
+                            accept="image/*"
+                            onChange={(event) =>
+                              handleProfileImageUpload(
+                                "profilePhotoUrl",
+                                event.target.files?.[0]
+                              )
+                            }
+                          />
+                          {profileDraft.profilePhotoUrl ? (
+                            <img
+                              src={profileDraft.profilePhotoUrl}
+                              alt="Profile"
+                              className="mx-auto mt-3 h-44 w-full max-w-md rounded-xl object-cover"
+                            />
+                          ) : null}
+                        </label>
+                        {uploadingImageTarget === "profilePhotoUrl" ? (
+                          <p className="text-xs text-sand-500">Uploading profile image...</p>
+                        ) : null}
+
+                        <label className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
+                          <p className="text-sm font-semibold text-sand-900">
+                            Citizenship front photo
+                          </p>
+                          <p className="mt-1 text-xs text-sand-500">
+                            {profileDraft.citizenshipFrontPhotoUrl
+                              ? "Update image"
+                              : "Browse files"}
+                          </p>
+                          <input
+                            className="hidden"
+                            type="file"
+                            accept="image/*"
+                            onChange={(event) =>
+                              handleProfileImageUpload(
+                                "citizenshipFrontPhotoUrl",
+                                event.target.files?.[0]
+                              )
+                            }
+                          />
+                          {profileDraft.citizenshipFrontPhotoUrl ? (
+                            <img
+                              src={profileDraft.citizenshipFrontPhotoUrl}
+                              alt="Citizenship front"
+                              className="mx-auto mt-3 h-44 w-full max-w-md rounded-xl object-cover"
+                            />
+                          ) : null}
+                        </label>
+                        {uploadingImageTarget === "citizenshipFrontPhotoUrl" ? (
+                          <p className="text-xs text-sand-500">Uploading front image...</p>
+                        ) : null}
+
+                        <label className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
+                          <p className="text-sm font-semibold text-sand-900">
+                            Citizenship back photo
+                          </p>
+                          <p className="mt-1 text-xs text-sand-500">
+                            {profileDraft.citizenshipBackPhotoUrl
+                              ? "Update image"
+                              : "Browse files"}
+                          </p>
+                          <input
+                            className="hidden"
+                            type="file"
+                            accept="image/*"
+                            onChange={(event) =>
+                              handleProfileImageUpload(
+                                "citizenshipBackPhotoUrl",
+                                event.target.files?.[0]
+                              )
+                            }
+                          />
+                          {profileDraft.citizenshipBackPhotoUrl ? (
+                            <img
+                              src={profileDraft.citizenshipBackPhotoUrl}
+                              alt="Citizenship back"
+                              className="mx-auto mt-3 h-44 w-full max-w-md rounded-xl object-cover"
+                            />
+                          ) : null}
+                        </label>
+                        {uploadingImageTarget === "citizenshipBackPhotoUrl" ? (
+                          <p className="text-xs text-sand-500">Uploading back image...</p>
+                        ) : null}
                       </div>
                       <div className="flex flex-col gap-3 sm:flex-row">
                         <Button onClick={handleProfileSave}>Save profile</Button>
@@ -1672,48 +1871,81 @@ export default function App() {
                           />
                         </div>
                       ) : (
-                        <div className="grid gap-4 sm:grid-cols-2">
-                          <Input
-                            placeholder="Phone number"
-                            value={profileDraft.phone || ""}
-                            onChange={(event) =>
-                              setProfileDraft((prev) => ({
-                                ...prev,
-                                phone: event.target.value,
-                              }))
-                            }
-                          />
-                          <Input
-                            placeholder="Citizenship number"
-                            value={profileDraft.citizenshipNumber || ""}
-                            onChange={(event) =>
-                              setProfileDraft((prev) => ({
-                                ...prev,
-                                citizenshipNumber: event.target.value,
-                              }))
-                            }
-                          />
-                          <Input
-                            placeholder="Profile photo (placeholder)"
-                            value={profileDraft.profilePhotoUrl || ""}
-                            onChange={(event) =>
-                              setProfileDraft((prev) => ({
-                                ...prev,
-                                profilePhotoUrl: event.target.value,
-                              }))
-                            }
-                          />
-                          <Input
-                            placeholder="Citizenship photo (placeholder)"
-                            value={profileDraft.citizenshipPhotoUrl || ""}
-                            onChange={(event) =>
-                              setProfileDraft((prev) => ({
-                                ...prev,
-                                citizenshipPhotoUrl: event.target.value,
-                              }))
-                            }
-                          />
-                        </div>
+                        <>
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            <Input
+                              placeholder="Phone number"
+                              value={profileDraft.phone || ""}
+                              onChange={(event) =>
+                                setProfileDraft((prev) => ({
+                                  ...prev,
+                                  phone: event.target.value,
+                                }))
+                              }
+                            />
+                            <Input
+                              placeholder="Citizenship number"
+                              value={profileDraft.citizenshipNumber || ""}
+                              onChange={(event) =>
+                                setProfileDraft((prev) => ({
+                                  ...prev,
+                                  citizenshipNumber: event.target.value,
+                                }))
+                              }
+                            />
+                          </div>
+                          <div className="space-y-4">
+                          <label className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
+                            <p className="text-sm font-semibold text-sand-900">Profile photo</p>
+                            <p className="mt-1 text-xs text-sand-500">Browse files</p>
+                            <input
+                              className="hidden"
+                              type="file"
+                              accept="image/*"
+                              onChange={(event) =>
+                                handleProfileImageUpload(
+                                  "profilePhotoUrl",
+                                  event.target.files?.[0]
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
+                            <p className="text-sm font-semibold text-sand-900">
+                              Citizenship front photo
+                            </p>
+                            <p className="mt-1 text-xs text-sand-500">Browse files</p>
+                            <input
+                              className="hidden"
+                              type="file"
+                              accept="image/*"
+                              onChange={(event) =>
+                                handleProfileImageUpload(
+                                  "citizenshipFrontPhotoUrl",
+                                  event.target.files?.[0]
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
+                            <p className="text-sm font-semibold text-sand-900">
+                              Citizenship back photo
+                            </p>
+                            <p className="mt-1 text-xs text-sand-500">Browse files</p>
+                            <input
+                              className="hidden"
+                              type="file"
+                              accept="image/*"
+                              onChange={(event) =>
+                                handleProfileImageUpload(
+                                  "citizenshipBackPhotoUrl",
+                                  event.target.files?.[0]
+                                )
+                              }
+                            />
+                          </label>
+                          </div>
+                        </>
                       )}
 
                       <div className="flex flex-wrap gap-3">
@@ -1771,27 +2003,65 @@ export default function App() {
                           </div>
                           <div className="grid gap-4 sm:grid-cols-2">
                             {(activeForm.components || activeForm.fields || []).map(
-                              (field) => {
+                              (field, index) => {
                                 const fieldKey =
                                   field.id || field.tag || `field-${index}`;
                                 const value = formValues[fieldKey] || "";
                                 const error = formErrors[fieldKey];
                                 return (
                                   <div key={fieldKey} className="space-y-2">
-                                    <Input
-                                      placeholder={
-                                        field.required
-                                          ? `${field.label} *`
-                                          : field.label
-                                      }
-                                      value={value}
-                                      onChange={(event) =>
-                                        setFormValues((prev) => ({
-                                          ...prev,
-                                          [fieldKey]: event.target.value,
-                                        }))
-                                      }
-                                    />
+                                    {field.type === "image" ? (
+                                      <>
+                                        <label className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
+                                          <p className="text-sm font-semibold text-sand-900">
+                                            {field.required
+                                              ? `${field.label} *`
+                                              : field.label}
+                                          </p>
+                                          <p className="mt-1 text-xs text-sand-500">
+                                            Browse files
+                                          </p>
+                                          <input
+                                            className="hidden"
+                                            type="file"
+                                            accept="image/*"
+                                            onChange={(event) =>
+                                              handleFormImageUpload(
+                                                fieldKey,
+                                                event.target.files?.[0]
+                                              )
+                                            }
+                                          />
+                                          {value ? (
+                                            <img
+                                              src={value}
+                                              alt={field.label}
+                                              className="mx-auto mt-3 h-24 rounded-xl object-cover"
+                                            />
+                                          ) : null}
+                                        </label>
+                                        {uploadingImageTarget === `form:${fieldKey}` ? (
+                                          <p className="text-xs text-sand-500">
+                                            Uploading image...
+                                          </p>
+                                        ) : null}
+                                      </>
+                                    ) : (
+                                      <Input
+                                        placeholder={
+                                          field.required
+                                            ? `${field.label} *`
+                                            : field.label
+                                        }
+                                        value={value}
+                                        onChange={(event) =>
+                                          setFormValues((prev) => ({
+                                            ...prev,
+                                            [fieldKey]: event.target.value,
+                                          }))
+                                        }
+                                      />
+                                    )}
                                     {error ? (
                                       <p className="text-sm text-sand-500">
                                         {error}
@@ -2488,8 +2758,8 @@ export default function App() {
                                       {
                                         id: `${component.type}-${Date.now()}`,
                                         type: component.type,
-                                        label: "",
-                                        tag: component.tag || "",
+                                        label: component.label,
+                                        tag: component.tag || toProfileTag(component.label),
                                         iconName: component.iconName,
                                         required: false,
                                         options: "",
@@ -2533,8 +2803,8 @@ export default function App() {
                               const nextItem = {
                                 id: `${component.type}-${Date.now()}`,
                                 type: component.type,
-                                label: "",
-                                tag: component.tag || "",
+                                label: component.label,
+                                tag: component.tag || toProfileTag(component.label),
                                 iconName: component.iconName,
                                 required: false,
                                 options: "",
@@ -3267,42 +3537,64 @@ export default function App() {
         ) : null}
 
         {showSavePrompt ? (
-          <section className="mx-auto mt-6 max-w-4xl">
-            <Card className="space-y-5">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+            <div className="w-full max-w-3xl rounded-3xl border border-sand-200 bg-white p-6 shadow-xl">
               <SectionHeading
-                title="Save new information?"
-                subtitle="We found new details from this form. Save them to your profile?"
+                title="Review before submit"
+                subtitle="Confirm your form entries. Optionally save selected values to your profile for future autofill."
               />
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="mt-4 grid max-h-[50vh] gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
                 {saveCandidates.map((item) => (
-                  <div
+                  <label
                     key={item.key}
-                    className="rounded-2xl border border-sand-200 bg-white p-4"
+                    className="flex cursor-pointer items-start gap-3 rounded-2xl border border-sand-200 bg-white p-4"
                   >
-                    <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
-                      {item.key}
-                    </p>
-                    <p className="mt-2 text-base text-sand-950">
-                      {item.value}
+                    <input
+                      type="checkbox"
+                      checked={Boolean(selectedSaveCandidateKeys[item.key])}
+                      onChange={(event) =>
+                        setSelectedSaveCandidateKeys((prev) => ({
+                          ...prev,
+                          [item.key]: event.target.checked,
+                        }))
+                      }
+                    />
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                        {item.label}
+                      </p>
+                      <p className="text-xs text-sand-500">{item.key}</p>
+                      <p className="mt-2 text-base text-sand-950">{item.value}</p>
+                    </div>
+                  </label>
+                ))}
+                {!saveCandidates.length ? (
+                  <div className="rounded-2xl border border-sand-200 bg-white p-4 sm:col-span-2">
+                    <p className="text-sm text-sand-500">
+                      No new profile fields found. Submit when you are ready.
                     </p>
                   </div>
-                ))}
+                ) : null}
               </div>
-              <div className="flex flex-wrap gap-3">
-                <Button onClick={handleSaveMissing}>Save to profile</Button>
+              <div className="mt-6 flex flex-wrap gap-3">
+                <Button onClick={handleSaveMissing}>Save selected and submit</Button>
+                <Button variant="secondary" onClick={handleSubmitWithoutSaving}>
+                  Submit without saving
+                </Button>
                 <Button
                   variant="ghost"
                   onClick={() => {
                     setShowSavePrompt(false);
-                    setActiveForm(null);
                     setSaveCandidates([]);
+                    setSelectedSaveCandidateKeys({});
+                    setPendingSubmissionData(null);
                   }}
                 >
-                  Not now
+                  Back to form
                 </Button>
               </div>
-            </Card>
-          </section>
+            </div>
+          </div>
         ) : null}
 
 
@@ -3422,7 +3714,9 @@ export default function App() {
                         id: `custom-${Date.now()}`,
                         type: customComponent.type,
                         label: customComponent.label,
-                        tag: customComponent.tag,
+                        tag:
+                          customComponent.tag ||
+                          toProfileTag(customComponent.label),
                         iconName: customComponent.iconName,
                         required: customComponent.required,
                         options: customComponent.options,
@@ -3550,15 +3844,3 @@ const LandingPage = () => (
     </main>
   </div>
 );
-  const handleViewUserSubmission = async (submissionId: string) => {
-    try {
-      setSubmitMessage("");
-      const payload = await authedFetch(`/api/submissions/me/${submissionId}`);
-      setSelectedUserSubmission(payload.data || null);
-      navigate(`/submissions/${submissionId}`);
-    } catch (error) {
-      setSubmitMessage(
-        error instanceof Error ? error.message : "Failed to load submission."
-      );
-    }
-  };

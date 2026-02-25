@@ -8,6 +8,7 @@ const orgRoutes = require("./routes/orgs");
 const adminRoutes = require("./routes/admin");
 const submissionRoutes = require("./routes/submissions");
 const profileRoutes = require("./routes/profile");
+const uploadRoutes = require("./routes/uploads");
 
 dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 connectDB();
@@ -26,6 +27,7 @@ app.use("/api/orgs", orgRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/submissions", submissionRoutes);
 app.use("/api/profile", profileRoutes);
+app.use("/api/uploads", uploadRoutes);
 
 const PORT = process.env.PORT || 5000;
 

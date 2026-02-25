@@ -1,9 +1,14 @@
 const express = require("express");
-const mongoose = require("mongoose");
 const { clerkClient } = require("@clerk/express");
 const Organization = require("../models/Organization");
 const Form = require("../models/Form");
 const { requireRole } = require("../middleware/auth");
+const {
+  isValidObjectId,
+  parseDateValue,
+  sanitizeFormComponents,
+  sanitizeString,
+} = require("../utils/validation");
 
 const router = express.Router();
 
@@ -23,18 +28,19 @@ router.post("/orgs", requireRole("admin"), async (req, res) => {
       subscriptionStartsAt,
       subscriptionEndsAt,
     } = req.body;
-    if (!name || !name.trim()) {
+    const cleanName = sanitizeString(name, 140);
+    if (!cleanName) {
       return res.status(400).json({ error: "Organization name is required" });
     }
 
-    const slug = slugify(name);
+    const slug = slugify(cleanName);
     const existing = await Organization.findOne({ slug });
     if (existing) {
       return res.status(409).json({ error: "Organization already exists" });
     }
 
     const createPayload = {
-      name: name.trim(),
+      name: cleanName,
       slug,
       createdBy: req.auth.userId,
     };
@@ -43,20 +49,27 @@ router.post("/orgs", requireRole("admin"), async (req, res) => {
       createPayload.subscriptionStatus = subscriptionStatus;
     }
 
-    if (subscriptionStartsAt) {
-      const parsedStart = new Date(subscriptionStartsAt);
-      if (Number.isNaN(parsedStart.getTime())) {
-        return res.status(400).json({ error: "Invalid subscription start date" });
-      }
-      createPayload.subscriptionStartsAt = parsedStart;
+    const parsedStart = parseDateValue(
+      subscriptionStartsAt,
+      "subscription start date"
+    );
+    if (!parsedStart.ok) {
+      return res.status(400).json({ error: parsedStart.error });
     }
 
-    if (subscriptionEndsAt) {
-      const parsedEnd = new Date(subscriptionEndsAt);
-      if (Number.isNaN(parsedEnd.getTime())) {
-        return res.status(400).json({ error: "Invalid subscription end date" });
-      }
-      createPayload.subscriptionEndsAt = parsedEnd;
+    const parsedEnd = parseDateValue(
+      subscriptionEndsAt,
+      "subscription end date"
+    );
+    if (!parsedEnd.ok) {
+      return res.status(400).json({ error: parsedEnd.error });
+    }
+
+    if (parsedStart.value !== undefined) {
+      createPayload.subscriptionStartsAt = parsedStart.value;
+    }
+    if (parsedEnd.value !== undefined) {
+      createPayload.subscriptionEndsAt = parsedEnd.value;
     }
 
     const org = await Organization.create(createPayload);
@@ -109,7 +122,7 @@ router.get("/orgs/:orgId", requireRole("admin"), async (req, res) => {
   try {
     const { orgId } = req.params;
 
-    if (!mongoose.Types.ObjectId.isValid(orgId)) {
+    if (!isValidObjectId(orgId)) {
       return res.status(400).json({ error: "Invalid organization ID" });
     }
 
@@ -138,13 +151,14 @@ router.put("/orgs/:orgId", requireRole("admin"), async (req, res) => {
       subscriptionEndsAt,
     } = req.body;
 
-    if (!mongoose.Types.ObjectId.isValid(orgId)) {
+    if (!isValidObjectId(orgId)) {
       return res.status(400).json({ error: "Invalid organization ID" });
     }
 
     const updates = {};
     if (typeof name === "string" && name.trim()) {
-      const nextSlug = slugify(name);
+      const nextName = sanitizeString(name, 140);
+      const nextSlug = slugify(nextName);
       const existing = await Organization.findOne({
         slug: nextSlug,
         _id: { $ne: orgId },
@@ -152,7 +166,7 @@ router.put("/orgs/:orgId", requireRole("admin"), async (req, res) => {
       if (existing) {
         return res.status(409).json({ error: "Organization already exists" });
       }
-      updates.name = name.trim();
+      updates.name = nextName;
       updates.slug = nextSlug;
     }
 
@@ -161,39 +175,35 @@ router.put("/orgs/:orgId", requireRole("admin"), async (req, res) => {
     }
 
     if (typeof panNumber === "string") {
-      updates.panNumber = panNumber.trim();
+      updates.panNumber = sanitizeString(panNumber, 120);
     }
 
     if (typeof licenseNumber === "string") {
-      updates.licenseNumber = licenseNumber.trim();
+      updates.licenseNumber = sanitizeString(licenseNumber, 120);
     }
 
     if (typeof location === "string") {
-      updates.location = location.trim();
+      updates.location = sanitizeString(location, 200);
     }
 
     if (["active", "canceled", "expired"].includes(subscriptionStatus)) {
       updates.subscriptionStatus = subscriptionStatus;
     }
 
-    if (subscriptionStartsAt === null || subscriptionStartsAt === "") {
-      updates.subscriptionStartsAt = null;
-    } else if (subscriptionStartsAt) {
-      const parsedStart = new Date(subscriptionStartsAt);
-      if (Number.isNaN(parsedStart.getTime())) {
-        return res.status(400).json({ error: "Invalid start date" });
-      }
-      updates.subscriptionStartsAt = parsedStart;
+    const parsedStart = parseDateValue(subscriptionStartsAt, "start date");
+    if (!parsedStart.ok) {
+      return res.status(400).json({ error: parsedStart.error });
+    }
+    if (parsedStart.value !== undefined) {
+      updates.subscriptionStartsAt = parsedStart.value;
     }
 
-    if (subscriptionEndsAt === null || subscriptionEndsAt === "") {
-      updates.subscriptionEndsAt = null;
-    } else if (subscriptionEndsAt) {
-      const parsedEnd = new Date(subscriptionEndsAt);
-      if (Number.isNaN(parsedEnd.getTime())) {
-        return res.status(400).json({ error: "Invalid end date" });
-      }
-      updates.subscriptionEndsAt = parsedEnd;
+    const parsedEnd = parseDateValue(subscriptionEndsAt, "end date");
+    if (!parsedEnd.ok) {
+      return res.status(400).json({ error: parsedEnd.error });
+    }
+    if (parsedEnd.value !== undefined) {
+      updates.subscriptionEndsAt = parsedEnd.value;
     }
 
     const org = await Organization.findByIdAndUpdate(orgId, updates, {
@@ -217,6 +227,10 @@ router.post(
     try {
       const { orgId } = req.params;
       const { organizationUserId } = req.body;
+
+      if (!isValidObjectId(orgId)) {
+        return res.status(400).json({ error: "Invalid organization ID" });
+      }
 
       if (!organizationUserId) {
         return res
@@ -324,7 +338,7 @@ router.post("/orgs/:orgId/forms", requireRole("admin"), async (req, res) => {
     const { orgId } = req.params;
     const { name, description, fields, components } = req.body;
 
-    if (!mongoose.Types.ObjectId.isValid(orgId)) {
+    if (!isValidObjectId(orgId)) {
       return res.status(400).json({ error: "Invalid organization ID" });
     }
 
@@ -333,16 +347,27 @@ router.post("/orgs/:orgId/forms", requireRole("admin"), async (req, res) => {
       return res.status(404).json({ error: "Organization not found" });
     }
 
-    if (!name || !name.trim()) {
+    const cleanName = sanitizeString(name, 140);
+    if (!cleanName) {
       return res.status(400).json({ error: "Form name is required" });
+    }
+
+    const sourceComponents = Array.isArray(components)
+      ? components
+      : Array.isArray(fields)
+      ? fields
+      : [];
+    const sanitizedComponents = sanitizeFormComponents(sourceComponents);
+    if (!sanitizedComponents.ok) {
+      return res.status(400).json({ error: sanitizedComponents.error });
     }
 
     const form = await Form.create({
       organizationId: orgId,
-      name: name.trim(),
-      description: description ? description.trim() : undefined,
-      fields: Array.isArray(fields) ? fields : [],
-      components: Array.isArray(components) ? components : [],
+      name: cleanName,
+      description: sanitizeString(description, 500) || undefined,
+      fields: sanitizedComponents.value,
+      components: sanitizedComponents.value,
     });
 
     return res.status(201).json({ data: form });
@@ -358,11 +383,11 @@ router.get(
     try {
       const { orgId, formId } = req.params;
 
-      if (!mongoose.Types.ObjectId.isValid(orgId)) {
+      if (!isValidObjectId(orgId)) {
         return res.status(400).json({ error: "Invalid organization ID" });
       }
 
-      if (!mongoose.Types.ObjectId.isValid(formId)) {
+      if (!isValidObjectId(formId)) {
         return res.status(400).json({ error: "Invalid form ID" });
       }
 
@@ -390,25 +415,36 @@ router.put(
       const { orgId, formId } = req.params;
       const { name, description, fields, components } = req.body;
 
-      if (!mongoose.Types.ObjectId.isValid(orgId)) {
+      if (!isValidObjectId(orgId)) {
         return res.status(400).json({ error: "Invalid organization ID" });
       }
 
-      if (!mongoose.Types.ObjectId.isValid(formId)) {
+      if (!isValidObjectId(formId)) {
         return res.status(400).json({ error: "Invalid form ID" });
       }
 
-      if (!name || !name.trim()) {
+      const cleanName = sanitizeString(name, 140);
+      if (!cleanName) {
         return res.status(400).json({ error: "Form name is required" });
+      }
+
+      const sourceComponents = Array.isArray(components)
+        ? components
+        : Array.isArray(fields)
+        ? fields
+        : [];
+      const sanitizedComponents = sanitizeFormComponents(sourceComponents);
+      if (!sanitizedComponents.ok) {
+        return res.status(400).json({ error: sanitizedComponents.error });
       }
 
       const form = await Form.findOneAndUpdate(
         { _id: formId, organizationId: orgId },
         {
-          name: name.trim(),
-          description: description ? description.trim() : undefined,
-          fields: Array.isArray(fields) ? fields : [],
-          components: Array.isArray(components) ? components : [],
+          name: cleanName,
+          description: sanitizeString(description, 500) || undefined,
+          fields: sanitizedComponents.value,
+          components: sanitizedComponents.value,
         },
         { new: true }
       );
@@ -431,11 +467,11 @@ router.delete(
     try {
       const { orgId, formId } = req.params;
 
-      if (!mongoose.Types.ObjectId.isValid(orgId)) {
+      if (!isValidObjectId(orgId)) {
         return res.status(400).json({ error: "Invalid organization ID" });
       }
 
-      if (!mongoose.Types.ObjectId.isValid(formId)) {
+      if (!isValidObjectId(formId)) {
         return res.status(400).json({ error: "Invalid form ID" });
       }
 

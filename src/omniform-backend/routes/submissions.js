@@ -3,6 +3,10 @@ const { clerkClient } = require("@clerk/express");
 const Submission = require("../models/Submission");
 const Form = require("../models/Form");
 const { requireRole } = require("../middleware/auth");
+const {
+  isValidObjectId,
+  sanitizeSubmissionData,
+} = require("../utils/validation");
 
 const router = express.Router();
 
@@ -19,6 +23,15 @@ router.post("/", requireRole("user"), async (req, res) => {
     const { formId, organizationId, data } = req.body;
     if (!formId || !organizationId) {
       return res.status(400).json({ error: "formId and organizationId required" });
+    }
+
+    if (!isValidObjectId(formId) || !isValidObjectId(organizationId)) {
+      return res.status(400).json({ error: "Invalid formId or organizationId" });
+    }
+
+    const sanitizedData = sanitizeSubmissionData(data);
+    if (!sanitizedData.ok) {
+      return res.status(400).json({ error: sanitizedData.error });
     }
 
     const existingCompleted = await Submission.findOne({
@@ -40,12 +53,16 @@ router.post("/", requireRole("user"), async (req, res) => {
       return res.status(404).json({ error: "Form not found" });
     }
 
+    if (form.status !== "active") {
+      return res.status(400).json({ error: "Form is not active" });
+    }
+
     const submission = await Submission.create({
       userId: req.auth.userId,
       userEmail: req.auth?.sessionClaims?.email || undefined,
       organizationId,
       formId,
-      data: data || {},
+      data: sanitizedData.value,
     });
 
     if (!submission.userEmail) {
