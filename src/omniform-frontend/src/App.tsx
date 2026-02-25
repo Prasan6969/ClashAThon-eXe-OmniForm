@@ -69,6 +69,9 @@ type Submission = {
   reviewNotes?: string;
   cooldownUntil?: string;
 };
+type UserSubmissionDetail = Submission & {
+  formId: string | { _id: string; name: string; fields?: FormField[] };
+};
 type OrgSubmissionSummary = {
   _id: string;
   formId: string | { _id: string; name: string };
@@ -144,6 +147,8 @@ export default function App() {
   });
   const [formMessage, setFormMessage] = useState("");
   const [showFormSave, setShowFormSave] = useState(false);
+  const [formLastSavedAt, setFormLastSavedAt] = useState<number | null>(null);
+  const [formDraftTouchedAt, setFormDraftTouchedAt] = useState<number | null>(null);
   const [adminOrgs, setAdminOrgs] = useState<Organization[]>([]);
   const [manageOrgQuery, setManageOrgQuery] = useState("");
   const [manageFormQuery, setManageFormQuery] = useState("");
@@ -195,6 +200,8 @@ export default function App() {
   const [submitMessage, setSubmitMessage] = useState("");
   const [orgLoading, setOrgLoading] = useState(false);
   const [formLoading, setFormLoading] = useState(false);
+  const [selectedUserSubmission, setSelectedUserSubmission] =
+    useState<UserSubmissionDetail | null>(null);
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [componentSearch, setComponentSearch] = useState("");
@@ -396,6 +403,9 @@ export default function App() {
         setFormMessage("Form created.");
       }
 
+      setFormLastSavedAt(Date.now());
+      setFormDraftTouchedAt(null);
+
       setFormId(null);
       setFormName("");
       setFormDescription("");
@@ -407,6 +417,35 @@ export default function App() {
         error instanceof Error ? error.message : "Failed to create form."
       );
     }
+  };
+
+  const resetFormBuilderDraft = () => {
+    setFormId(null);
+    setFormName("");
+    setFormDescription("");
+    setFormComponents([]);
+    setFormOrgId("");
+    setFormMessage("");
+    setShowCustomComponent(false);
+    setComponentSearch("");
+    setFormLastSavedAt(null);
+    setFormDraftTouchedAt(null);
+  };
+
+  const handleLeaveBuilder = () => {
+    const hasUnsaved =
+      formDraftTouchedAt &&
+      (!formLastSavedAt || formDraftTouchedAt > formLastSavedAt);
+    if (hasUnsaved) {
+      const confirmed = window.confirm(
+        "You have unsaved form changes. Discard them and leave the builder?"
+      );
+      if (!confirmed) return;
+      resetFormBuilderDraft();
+    } else {
+      resetFormBuilderDraft();
+    }
+    navigate("/admin");
   };
 
   const handleOrgDecision = async (
@@ -484,11 +523,13 @@ export default function App() {
     }
   };
 
-  const handleOrgSearch = async () => {
+  const handleOrgSearch = async (queryOverride?: string) => {
     try {
       setOrgLoading(true);
+      const queryValue =
+        queryOverride !== undefined ? queryOverride : orgQuery;
       const payload = await authedFetch(
-        `/api/orgs?query=${encodeURIComponent(orgQuery)}`
+        `/api/orgs?query=${encodeURIComponent(queryValue)}`
       );
       setOrgResults(payload.data || []);
     } catch (error) {
@@ -502,25 +543,17 @@ export default function App() {
     setSelectedOrg(org);
     setFormQuery("");
     setActiveForm(null);
-    try {
-      setFormLoading(true);
-      const payload = await authedFetch(`/api/orgs/${org._id}/forms?query=`);
-      setForms(payload.data || []);
-    } catch (error) {
-      setForms([]);
-    } finally {
-      setFormLoading(false);
-    }
+    navigate(`/orgs/${org._id}`);
   };
 
-  const handleFormSearch = async () => {
+  const handleFormSearch = async (orgId: string, queryOverride?: string) => {
     if (!selectedOrg) return;
     try {
       setFormLoading(true);
+      const queryValue =
+        queryOverride !== undefined ? queryOverride : formQuery;
       const payload = await authedFetch(
-        `/api/orgs/${selectedOrg._id}/forms?query=${encodeURIComponent(
-          formQuery
-        )}`
+        `/api/orgs/${orgId}/forms?query=${encodeURIComponent(queryValue)}`
       );
       setForms(payload.data || []);
     } catch (error) {
@@ -651,6 +684,8 @@ export default function App() {
         })
       );
       setFormComponents(components);
+      setFormLastSavedAt(Date.now());
+      setFormDraftTouchedAt(null);
       setAdminView("builder");
       navigate("/admin/builder");
       setShowFormSave(false);
@@ -951,7 +986,9 @@ export default function App() {
         location.pathname !== "/" &&
         location.pathname !== "/profile" &&
         location.pathname !== "/onboarding" &&
-        !location.pathname.startsWith("/forms/")
+        !location.pathname.startsWith("/forms/") &&
+        !location.pathname.startsWith("/orgs/") &&
+        !location.pathname.startsWith("/submissions/")
       ) {
         navigate("/", { replace: true });
       }
@@ -1076,6 +1113,43 @@ export default function App() {
 
   useEffect(() => {
     if (!isLoaded || !user || role !== "user") return;
+    if (!location.pathname.startsWith("/submissions/")) return;
+    const submissionId = location.pathname.split("/submissions/")[1];
+    if (!submissionId) return;
+    if (selectedUserSubmission?._id === submissionId) return;
+    handleViewUserSubmission(submissionId);
+  }, [isLoaded, user, role, location.pathname, selectedUserSubmission]);
+
+  useEffect(() => {
+    if (!isLoaded || !user || role !== "user") return;
+    if (!orgQuery.trim()) {
+      handleOrgSearch("");
+      return;
+    }
+  }, [isLoaded, user, role]);
+
+  useEffect(() => {
+    if (!isLoaded || !user || role !== "user") return;
+    if (!location.pathname.startsWith("/orgs/")) return;
+    const orgId = location.pathname.split("/orgs/")[1];
+    if (!orgId) return;
+    if (!selectedOrg || selectedOrg._id !== orgId) {
+      const match = orgResults.find((org) => org._id === orgId) || null;
+      setSelectedOrg(match);
+    }
+    handleFormSearch(orgId, formQuery);
+  }, [
+    isLoaded,
+    user,
+    role,
+    location.pathname,
+    formQuery,
+    selectedOrg,
+    orgResults,
+  ]);
+
+  useEffect(() => {
+    if (!isLoaded || !user || role !== "user") return;
     if (showOnboarding && location.pathname !== "/onboarding") {
       navigate("/onboarding", { replace: true });
       return;
@@ -1087,10 +1161,6 @@ export default function App() {
 
   useEffect(() => {
     if (!isLoaded || !user || role !== "user") return;
-    if (!orgQuery.trim()) {
-      setOrgResults([]);
-      return;
-    }
     const timer = setTimeout(() => {
       handleOrgSearch();
     }, 300);
@@ -1257,113 +1327,54 @@ export default function App() {
               element={
                 role === "user" && !showOnboarding ? (
                   <>
-                    <section className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-                      <Card className="space-y-6">
-                      <SectionHeading
-                        title="Find your organization"
-                        subtitle="Search by organization name, then select a form to autofill."
-                      />
-                      <div className="flex flex-col gap-3 sm:flex-row">
-                        <Input
-                          placeholder="Search organizations"
-                          value={orgQuery}
-                          onChange={(event) => setOrgQuery(event.target.value)}
+                    <section className="mx-auto grid max-w-6xl items-stretch gap-6 lg:grid-cols-2">
+                      <Card className="flex h-[calc(100vh-16rem)] flex-col space-y-6">
+                        <SectionHeading
+                          title="Find your organization"
+                          subtitle="Browse every organization and open its forms."
                         />
-                      </div>
-                      <div className="space-y-4">
-                        {orgResults.map((org) => (
-                          <div
-                            key={org._id}
-                            className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sand-200 bg-white p-4"
-                          >
-                            <div>
-                              <p className="text-lg font-semibold text-sand-950">
-                                {org.name}
-                              </p>
-                              <p className="text-sm text-sand-500">
-                                Active organization
-                              </p>
-                            </div>
-                            <Button
-                              variant="secondary"
-                              onClick={() => handleSelectOrg(org)}
-                              disabled={formLoading}
+                        <div className="flex flex-col gap-3 sm:flex-row">
+                          <Input
+                            placeholder="Search organizations"
+                            value={orgQuery}
+                            onChange={(event) => setOrgQuery(event.target.value)}
+                          />
+                        </div>
+                        <div className="flex-1 space-y-3 overflow-y-auto pr-1">
+                          {orgResults.map((org) => (
+                            <div
+                              key={org._id}
+                              className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sand-200 bg-white p-4"
                             >
-                              View forms
-                            </Button>
-                          </div>
-                        ))}
-                        {orgLoading ? (
-                          <p className="text-sm text-sand-500">Searching...</p>
-                        ) : null}
-                        {!orgLoading && !orgResults.length ? (
-                          <p className="text-sm text-sand-500">
-                            Search to see organizations.
-                          </p>
-                        ) : null}
-                      </div>
+                              <div>
+                                <p className="text-lg font-semibold text-sand-950">
+                                  {org.name}
+                                </p>
+                                <p className="text-sm text-sand-500">
+                                  Active organization
+                                </p>
+                              </div>
+                              <Button
+                                variant="secondary"
+                                onClick={() => handleSelectOrg(org)}
+                                disabled={formLoading}
+                              >
+                                View forms
+                              </Button>
+                            </div>
+                          ))}
+                          {orgLoading ? (
+                            <p className="text-sm text-sand-500">Searching...</p>
+                          ) : null}
+                          {!orgLoading && !orgResults.length ? (
+                            <p className="text-sm text-sand-500">
+                              No organizations yet.
+                            </p>
+                          ) : null}
+                        </div>
                       </Card>
 
-                      <Card className="space-y-5">
-                      <SectionHeading
-                        title={
-                          selectedOrg
-                            ? `Forms for ${selectedOrg.name}`
-                            : "Select an organization"
-                        }
-                        subtitle="Pick a form, autofill, and confirm before submitting."
-                      />
-                      <div className="flex flex-col gap-3 sm:flex-row">
-                        <Input
-                          placeholder="Search forms"
-                          value={formQuery}
-                          onChange={(event) => setFormQuery(event.target.value)}
-                        />
-                        <Button
-                          variant="secondary"
-                          onClick={handleFormSearch}
-                          disabled={formLoading}
-                        >
-                          {formLoading ? "Searching..." : "Search"}
-                        </Button>
-                      </div>
-                      <div className="space-y-3">
-                        {forms
-                          .filter(
-                            (form) =>
-                              !selectedOrg ||
-                              !form.organizationId ||
-                              form.organizationId === selectedOrg._id
-                          )
-                          .map((form) => (
-                          <div
-                            key={form._id}
-                            className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sand-200 bg-white p-4"
-                          >
-                            <div>
-                              <p className="font-semibold text-sand-950">
-                                {form.name}
-                              </p>
-                              <p className="text-sm text-sand-500">
-                                Autofill ready
-                              </p>
-                            </div>
-                            <Button size="sm" onClick={() => openForm(form)}>
-                              Fill
-                            </Button>
-                          </div>
-                        ))}
-                        {formLoading ? (
-                          <p className="text-sm text-sand-500">Loading forms...</p>
-                        ) : null}
-                        {!formLoading && !forms.length && selectedOrg ? (
-                          <p className="text-sm text-sand-500">No forms yet.</p>
-                        ) : null}
-                      </div>
-                      </Card>
-                    </section>
-                    <section className="mx-auto mt-10 grid max-w-6xl gap-6 lg:grid-cols-[1fr_1fr]">
-                      <Card className="space-y-5">
+                      <Card className="flex h-[520px] flex-col space-y-5">
                         <SectionHeading
                           title="Submission status"
                           subtitle="Track every form after submission."
@@ -1381,7 +1392,7 @@ export default function App() {
                             Clear canceled
                           </Button>
                         </div>
-                        <div className="max-h-[420px] space-y-4 overflow-y-auto pr-1">
+                        <div className="flex-1 space-y-4 overflow-y-auto pr-1">
                           {submissions.map((submission) => (
                             <div
                               key={submission._id}
@@ -1416,11 +1427,21 @@ export default function App() {
                                       | "pending"
                                       | "completed"
                                       | "rejected"
+                                      | "canceled"
                                   }
                                 />
                               </div>
-                              {submission.status === "pending" ? (
-                                <div className="mt-3">
+                              <div className="mt-3 flex flex-wrap items-center gap-2">
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  onClick={() =>
+                                    handleViewUserSubmission(submission._id)
+                                  }
+                                >
+                                  View
+                                </Button>
+                                {submission.status === "pending" ? (
                                   <Button
                                     variant="ghost"
                                     size="sm"
@@ -1430,8 +1451,8 @@ export default function App() {
                                   >
                                     Cancel submission
                                   </Button>
-                                </div>
-                              ) : null}
+                                ) : null}
+                              </div>
                             </div>
                           ))}
                           {!submissions.length ? (
@@ -1442,54 +1463,37 @@ export default function App() {
                         </div>
                       </Card>
 
-                      <Card className="space-y-5">
-                        <SectionHeading
-                          title="Next steps"
-                          subtitle="Confirm the autofilled details and submit in minutes."
-                        />
-                        <div className="space-y-4">
-                          <div className="rounded-2xl border border-sand-200 bg-white p-4">
-                            <p className="text-sm uppercase tracking-[0.2em] text-sand-500">
-                              Step 1
-                            </p>
-                            <p className="mt-2 text-lg font-semibold text-sand-950">
-                              Update your profile data once
-                            </p>
-                            <p className="text-sm text-sand-500">
-                              Your saved profile drives every autofill request.
-                            </p>
+                      {profileDraft.fullName &&
+                      profileDraft.workEmail &&
+                      profileDraft.personalEmail &&
+                      profileDraft.address ? null : (
+                        <Card className="space-y-5">
+                          <SectionHeading
+                            title="Next steps"
+                            subtitle="Complete your profile to unlock autofill."
+                          />
+                          <div className="space-y-4">
+                            <div className="rounded-2xl border border-sand-200 bg-white p-4">
+                              <p className="text-sm uppercase tracking-[0.2em] text-sand-500">
+                                Step 1
+                              </p>
+                              <p className="mt-2 text-lg font-semibold text-sand-950">
+                                Add the missing profile fields
+                              </p>
+                              <p className="text-sm text-sand-500">
+                                Your saved profile powers autofill.
+                              </p>
+                            </div>
+                            <Button
+                              size="lg"
+                              className="w-full"
+                              onClick={() => navigate("/profile")}
+                            >
+                              Go to profile
+                            </Button>
                           </div>
-                          <div className="rounded-2xl border border-sand-200 bg-white p-4">
-                            <p className="text-sm uppercase tracking-[0.2em] text-sand-500">
-                              Step 2
-                            </p>
-                            <p className="mt-2 text-lg font-semibold text-sand-950">
-                              Review and confirm before submit
-                            </p>
-                            <p className="text-sm text-sand-500">
-                              Edits are always possible before delivery.
-                            </p>
-                          </div>
-                          <div className="rounded-2xl border border-sand-200 bg-white p-4">
-                            <p className="text-sm uppercase tracking-[0.2em] text-sand-500">
-                              Step 3
-                            </p>
-                            <p className="mt-2 text-lg font-semibold text-sand-950">
-                              Track approvals in real time
-                            </p>
-                            <p className="text-sm text-sand-500">
-                              Accepted forms lock for 30 days.
-                            </p>
-                          </div>
-                        </div>
-                        <Button
-                          size="lg"
-                          className="w-full"
-                          onClick={() => navigate("/profile")}
-                        >
-                          Go to profile
-                        </Button>
-                      </Card>
+                        </Card>
+                      )}
                     </section>
                   </>
                 ) : null
@@ -1811,6 +1815,185 @@ export default function App() {
                         <p className="text-sm text-sand-500">
                           Start by selecting an organization and form on the
                           dashboard.
+                        </p>
+                      )}
+                    </Card>
+                  </section>
+                ) : null
+              }
+            />
+            <Route
+              path="/orgs/:orgId"
+              element={
+                role === "user" && !showOnboarding ? (
+                  <section className="mx-auto mt-10 max-w-6xl">
+                    <Card className="space-y-6">
+                      <div className="flex flex-wrap items-center justify-between gap-4">
+                        <SectionHeading
+                          title={
+                            selectedOrg
+                              ? `Forms for ${selectedOrg.name}`
+                              : "Organization forms"
+                          }
+                          subtitle="Browse templates and autofill instantly."
+                        />
+                        <Button
+                          variant="ghost"
+                          onClick={() => navigate("/")}
+                        >
+                          Back to dashboard
+                        </Button>
+                      </div>
+                      <div className="flex flex-col gap-3 sm:flex-row">
+                        <Input
+                          placeholder="Search forms"
+                          value={formQuery}
+                          onChange={(event) => setFormQuery(event.target.value)}
+                        />
+                      </div>
+                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                        {forms.map((form) => (
+                          <Card key={form._id} className="space-y-3">
+                            <div className="space-y-1">
+                              <p className="text-lg font-semibold text-sand-950">
+                                {form.name}
+                              </p>
+                              <p className="text-sm text-sand-500">
+                                {form.description || "No description"}
+                              </p>
+                            </div>
+                            <Button size="sm" onClick={() => openForm(form)}>
+                              Fill
+                            </Button>
+                          </Card>
+                        ))}
+                        {formLoading ? (
+                          <p className="text-sm text-sand-500">Loading forms...</p>
+                        ) : null}
+                        {!formLoading && !forms.length ? (
+                          <p className="text-sm text-sand-500">No forms yet.</p>
+                        ) : null}
+                        </div>
+                      </Card>
+
+                      {profileDraft.fullName &&
+                      profileDraft.workEmail &&
+                      profileDraft.personalEmail &&
+                      profileDraft.address ? null : (
+                        <Card className="space-y-5 lg:col-span-2">
+                          <SectionHeading
+                            title="Next steps"
+                            subtitle="Complete your profile to unlock autofill."
+                          />
+                          <div className="space-y-4">
+                            <div className="rounded-2xl border border-sand-200 bg-white p-4">
+                              <p className="text-sm uppercase tracking-[0.2em] text-sand-500">
+                                Step 1
+                              </p>
+                              <p className="mt-2 text-lg font-semibold text-sand-950">
+                                Add the missing profile fields
+                              </p>
+                              <p className="text-sm text-sand-500">
+                                Your saved profile powers autofill.
+                              </p>
+                            </div>
+                            <Button
+                              size="lg"
+                              className="w-full"
+                              onClick={() => navigate("/profile")}
+                            >
+                              Go to profile
+                            </Button>
+                          </div>
+                        </Card>
+                      )}
+                    </section>
+                ) : null
+              }
+            />
+            <Route
+              path="/submissions/:submissionId"
+              element={
+                role === "user" && !showOnboarding ? (
+                  <section className="mx-auto mt-10 max-w-4xl">
+                    <Card className="space-y-6">
+                      <div className="flex flex-wrap items-center justify-between gap-4">
+                        <SectionHeading
+                          title={
+                            selectedUserSubmission
+                              ? typeof selectedUserSubmission.formId === "string"
+                                ? "Submission details"
+                                : selectedUserSubmission.formId.name
+                              : "Submission details"
+                          }
+                          subtitle="Review what you submitted and track status."
+                        />
+                        <Button
+                          variant="ghost"
+                          onClick={() => navigate("/")}
+                        >
+                          Back to dashboard
+                        </Button>
+                      </div>
+                      {selectedUserSubmission ? (
+                        <div className="space-y-6">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <StatusPill status={selectedUserSubmission.status} />
+                            <p className="text-sm text-sand-500">
+                              Submitted{
+                              " " +
+                                new Date(
+                                  selectedUserSubmission.createdAt
+                                ).toLocaleString()}
+                            </p>
+                          </div>
+                          {selectedUserSubmission.data ? (
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              {Object.entries(selectedUserSubmission.data).map(
+                                ([key, value]) => (
+                                  <div
+                                    key={key}
+                                    className="rounded-2xl border border-sand-200 bg-white p-3"
+                                  >
+                                    <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                                      {key}
+                                    </p>
+                                    <p className="mt-1 text-sm text-sand-950">
+                                      {value || "—"}
+                                    </p>
+                                  </div>
+                                )
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-sand-500">
+                              No data submitted.
+                            </p>
+                          )}
+                          {selectedUserSubmission.reviewNotes ? (
+                            <div className="rounded-2xl border border-sand-200 bg-white p-4">
+                              <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                                Review notes
+                              </p>
+                              <p className="mt-2 text-sm text-sand-950">
+                                {selectedUserSubmission.reviewNotes}
+                              </p>
+                            </div>
+                          ) : null}
+                          {selectedUserSubmission.status === "pending" ? (
+                            <Button
+                              variant="ghost"
+                              onClick={() =>
+                                handleCancelSubmission(selectedUserSubmission._id)
+                              }
+                            >
+                              Cancel submission
+                            </Button>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-sand-500">
+                          Select a submission to review.
                         </p>
                       )}
                     </Card>
@@ -2182,7 +2365,7 @@ export default function App() {
                   <section className="mx-auto mt-6 min-h-[70vh] max-w-6xl">
                     <div className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-sand-200 bg-white px-4 py-3">
                       <div className="flex flex-wrap items-center gap-3">
-                        <Button variant="ghost" onClick={() => navigate("/admin")}>
+                        <Button variant="ghost" onClick={handleLeaveBuilder}>
                           Back to dashboard
                         </Button>
                         <p className="text-sm text-sand-500">
@@ -2299,20 +2482,21 @@ export default function App() {
                               <div
                                 key={component.label}
                                 draggable
-                                onClick={() => {
-                                  setFormComponents((prev) => [
-                                    ...prev,
-                                    {
-                                      id: `${component.type}-${Date.now()}`,
-                                      type: component.type,
-                                      label: "",
-                                      tag: component.tag || "",
-                                      iconName: component.iconName,
-                                      required: false,
-                                      options: "",
-                                    },
-                                  ]);
-                                }}
+                                  onClick={() => {
+                                    setFormComponents((prev) => [
+                                      ...prev,
+                                      {
+                                        id: `${component.type}-${Date.now()}`,
+                                        type: component.type,
+                                        label: "",
+                                        tag: component.tag || "",
+                                        iconName: component.iconName,
+                                        required: false,
+                                        options: "",
+                                      },
+                                    ]);
+                                    setFormDraftTouchedAt(Date.now());
+                                  }}
                                 onDragStart={(event) => {
                                   event.dataTransfer.setData(
                                     "component",
@@ -2359,6 +2543,7 @@ export default function App() {
                               updated.splice(insertAt, 0, nextItem);
                               return updated;
                             });
+                            setFormDraftTouchedAt(Date.now());
                           } else if (draggingComponentId) {
                             setFormComponents((prev) => {
                               const fromIndex = prev.findIndex(
@@ -2372,6 +2557,7 @@ export default function App() {
                               updated.splice(targetIndex, 0, moved);
                               return updated;
                             });
+                            setFormDraftTouchedAt(Date.now());
                           }
                           setDropIndex(null);
                           setDraggingComponentId(null);
@@ -2450,7 +2636,7 @@ export default function App() {
                                           component.required ? "primary" : "ghost"
                                         }
                                         type="button"
-                                        onClick={() =>
+                                        onClick={() => {
                                           setFormComponents((prev) =>
                                             prev.map((item, idx) =>
                                               idx === index
@@ -2460,19 +2646,21 @@ export default function App() {
                                                   }
                                                 : item
                                             )
-                                          )
-                                        }
+                                          );
+                                          setFormDraftTouchedAt(Date.now());
+                                        }}
                                       >
                                         {component.required ? "Required" : "Optional"}
                                       </Button>
                                       <Button
                                         variant="ghost"
                                         type="button"
-                                        onClick={() =>
+                                        onClick={() => {
                                           setFormComponents((prev) =>
                                             prev.filter((_, idx) => idx !== index)
-                                          )
-                                        }
+                                          );
+                                          setFormDraftTouchedAt(Date.now());
+                                        }}
                                       >
                                         Remove
                                       </Button>
@@ -2500,40 +2688,43 @@ export default function App() {
                                   <Input
                                     placeholder="Label"
                                     value={component.label}
-                                    onChange={(event) =>
+                                    onChange={(event) => {
                                       setFormComponents((prev) =>
                                         prev.map((item, idx) =>
                                           idx === index
                                             ? { ...item, label: event.target.value }
                                             : item
                                         )
-                                      )
-                                    }
+                                      );
+                                      setFormDraftTouchedAt(Date.now());
+                                    }}
                                   />
                                   <Input
                                     placeholder="Tag (maps to profile key)"
                                     value={component.tag}
-                                    onChange={(event) =>
+                                    onChange={(event) => {
                                       setFormComponents((prev) =>
                                         prev.map((item, idx) =>
                                           idx === index
                                             ? { ...item, tag: event.target.value }
                                             : item
                                         )
-                                      )
-                                    }
+                                      );
+                                      setFormDraftTouchedAt(Date.now());
+                                    }}
                                   />
                                   <Select
                                     value={component.type}
-                                    onChange={(event) =>
+                                    onChange={(event) => {
                                       setFormComponents((prev) =>
                                         prev.map((item, idx) =>
                                           idx === index
                                             ? { ...item, type: event.target.value }
                                             : item
                                         )
-                                      )
-                                    }
+                                      );
+                                      setFormDraftTouchedAt(Date.now());
+                                    }}
                                   >
                                     <option value="text">text</option>
                                     <option value="email">email</option>
@@ -2544,7 +2735,7 @@ export default function App() {
                                   <Input
                                     placeholder="Options (comma)"
                                     value={component.options}
-                                    onChange={(event) =>
+                                    onChange={(event) => {
                                       setFormComponents((prev) =>
                                         prev.map((item, idx) =>
                                           idx === index
@@ -2554,8 +2745,9 @@ export default function App() {
                                               }
                                             : item
                                         )
-                                      )
-                                    }
+                                      );
+                                      setFormDraftTouchedAt(Date.now());
+                                    }}
                                   />
                                 </div>
                               </div>
@@ -3358,3 +3550,15 @@ const LandingPage = () => (
     </main>
   </div>
 );
+  const handleViewUserSubmission = async (submissionId: string) => {
+    try {
+      setSubmitMessage("");
+      const payload = await authedFetch(`/api/submissions/me/${submissionId}`);
+      setSelectedUserSubmission(payload.data || null);
+      navigate(`/submissions/${submissionId}`);
+    } catch (error) {
+      setSubmitMessage(
+        error instanceof Error ? error.message : "Failed to load submission."
+      );
+    }
+  };

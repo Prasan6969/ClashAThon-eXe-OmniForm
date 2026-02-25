@@ -78,6 +78,24 @@ router.get("/me", requireRole("user"), async (req, res) => {
   }
 });
 
+router.get("/me/:id", requireRole("user"), async (req, res) => {
+  try {
+    const submission = await Submission.findById(req.params.id).populate(
+      "formId",
+      "name fields"
+    );
+    if (!submission) {
+      return res.status(404).json({ error: "Submission not found" });
+    }
+    if (String(submission.userId) !== String(req.auth.userId)) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    return res.json({ data: submission });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to fetch submission" });
+  }
+});
+
 router.post("/:id/cancel", requireRole("user"), async (req, res) => {
   try {
     const submission = await Submission.findById(req.params.id);
