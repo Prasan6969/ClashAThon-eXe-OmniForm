@@ -6,6 +6,14 @@ import { SectionHeading } from "../../../components/ui/section-heading";
 import { StatusPill } from "../../../components/ui/status-pill";
 import type { OrgSubmissionDetail } from "../../../types/app";
 
+const formatFieldLabel = (value: string) =>
+  String(value || "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_\-.]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+
 type OrganizationSubmissionReviewPageProps = {
   selectedOrgSubmission: OrgSubmissionDetail | null;
   orgDashboardMessage: string;
@@ -67,7 +75,9 @@ export const OrganizationSubmissionReviewPage = ({
                   key={key}
                   className="rounded-2xl border border-sand-200 bg-white p-3"
                 >
-                  <p className="text-xs uppercase tracking-[0.2em] text-sand-500">{key}</p>
+                  <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                    {formatFieldLabel(key)}
+                  </p>
                   {renderSubmissionValue(selectedOrgSubmission, key, String(value || ""))}
                 </div>
               ))}

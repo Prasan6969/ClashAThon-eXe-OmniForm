@@ -59,7 +59,17 @@ export type TagDefinition = {
   _id: string;
   label: string;
   tag: string;
-  type: "text" | "email" | "date" | "number" | "image" | "select" | "map";
+  type:
+    | "text"
+    | "email"
+    | "date"
+    | "number"
+    | "image"
+    | "select"
+    | "radio"
+    | "checkbox"
+    | "combobox"
+    | "map";
   options?: string[];
 };
 
@@ -70,6 +80,7 @@ export type Profile = {
   address?: string;
   phone?: string;
   citizenshipNumber?: string;
+  passportSizePhotoUrl?: string;
   profilePhotoUrl?: string;
   citizenshipPhotoUrl?: string;
   customFields?: Record<string, string>;

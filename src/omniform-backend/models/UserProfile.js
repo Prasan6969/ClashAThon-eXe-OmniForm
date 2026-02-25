@@ -9,6 +9,7 @@ const UserProfileSchema = new mongoose.Schema(
     address: { type: String, trim: true },
     phone: { type: String, trim: true },
     citizenshipNumber: { type: String, trim: true },
+    passportSizePhotoUrl: { type: String, trim: true },
     profilePhotoUrl: { type: String, trim: true },
     citizenshipPhotoUrl: { type: String, trim: true },
     customFields: {

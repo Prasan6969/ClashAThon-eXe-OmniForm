@@ -8,6 +8,9 @@ const firstDefined = (...values) =>
   values.find((value) => typeof value === "string" && value.trim().length > 0) ||
   "";
 
+const getImageKitAuthHeader = (privateKey) =>
+  `Basic ${Buffer.from(`${privateKey}:`).toString("base64")}`;
+
 router.get(
   "/imagekit-auth",
   requireRole(["user", "admin", "organization"]),
@@ -48,6 +51,91 @@ router.get(
         urlEndpoint: urlEndpoint || undefined,
       },
     });
+  }
+);
+
+router.delete(
+  "/imagekit-file",
+  requireRole(["user", "admin", "organization"]),
+  async (req, res) => {
+    try {
+      const privateKey = firstDefined(process.env.IMAGEKIT_PRIVATE_KEY);
+      if (!privateKey) {
+        return res.status(500).json({
+          error: "Image deletion is not configured. Missing: IMAGEKIT_PRIVATE_KEY",
+        });
+      }
+
+      const imageUrl = String(req.body?.url || "").trim();
+      if (!imageUrl) {
+        return res.status(400).json({ error: "Image URL is required" });
+      }
+
+      if (typeof fetch !== "function") {
+        return res.status(500).json({ error: "Server fetch API is unavailable" });
+      }
+
+      let fileName = "";
+      try {
+        const parsed = new URL(imageUrl);
+        fileName = decodeURIComponent(parsed.pathname.split("/").pop() || "");
+      } catch {
+        fileName = imageUrl.split("?")[0].split("/").pop() || "";
+      }
+
+      const queryCandidates = [
+        `url = "${imageUrl.replace(/"/g, '\\"')}"`,
+        fileName ? `name = "${fileName.replace(/"/g, '\\"')}"` : "",
+      ].filter(Boolean);
+
+      let fileId = "";
+      for (const searchQuery of queryCandidates) {
+        const listResponse = await fetch(
+          `https://api.imagekit.io/v1/files?limit=1&searchQuery=${encodeURIComponent(
+            searchQuery
+          )}`,
+          {
+            method: "GET",
+            headers: {
+              Authorization: getImageKitAuthHeader(privateKey),
+            },
+          }
+        );
+
+        if (!listResponse.ok) continue;
+        const files = await listResponse.json().catch(() => []);
+        const matched = Array.isArray(files) ? files[0] : null;
+        if (matched?.fileId) {
+          fileId = String(matched.fileId);
+          break;
+        }
+      }
+
+      if (!fileId) {
+        return res.json({ data: { deleted: false, reason: "not_found" } });
+      }
+
+      const deleteResponse = await fetch(
+        `https://api.imagekit.io/v1/files/${encodeURIComponent(fileId)}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: getImageKitAuthHeader(privateKey),
+          },
+        }
+      );
+
+      if (!deleteResponse.ok) {
+        const payload = await deleteResponse.json().catch(() => ({}));
+        return res.status(500).json({
+          error: payload?.message || "Failed to delete image from ImageKit",
+        });
+      }
+
+      return res.json({ data: { deleted: true, fileId } });
+    } catch (error) {
+      return res.status(500).json({ error: "Failed to delete image" });
+    }
   }
 );
 

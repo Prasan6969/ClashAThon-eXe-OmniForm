@@ -100,13 +100,16 @@ export const CustomComponentModal = ({
           <option value="date">date</option>
           <option value="number">number</option>
           <option value="select">select</option>
+          <option value="radio">radio</option>
+          <option value="checkbox">checkbox</option>
+          <option value="combobox">combobox</option>
           <option value="image">image</option>
           <option value="map">map</option>
         </Select>
         <Input
           placeholder={
             customComponent.type === "image"
-              ? "Accepted formats (e.g., jpg,png)"
+              ? "Formats or size (e.g., jpg,png,300x400)"
               : "Options (comma)"
           }
           value={customComponent.options}
@@ -115,6 +118,11 @@ export const CustomComponentModal = ({
           }
         />
       </div>
+      {customComponent.type === "image" ? (
+        <p className="mt-2 text-xs text-sand-500">
+          Image rules: comma separated formats plus optional exact size, e.g. jpg,png,300x400.
+        </p>
+      ) : null}
       <div className="mt-4 grid grid-cols-4 gap-2">
         {[
           { name: "type", Icon: Type },

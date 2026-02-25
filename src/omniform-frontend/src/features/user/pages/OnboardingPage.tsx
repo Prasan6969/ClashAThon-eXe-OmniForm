@@ -46,64 +46,82 @@ export const OnboardingPage = ({
 
       {onboardingStep === 1 ? (
         <div className="grid gap-4 sm:grid-cols-2">
-          <Input
-            placeholder="Full name *"
-            value={profileDraft.fullName || ""}
-            onChange={(event) =>
-              setProfileDraft((prev) => ({ ...prev, fullName: event.target.value }))
-            }
-          />
-          <Input
-            placeholder="Work email *"
-            value={profileDraft.workEmail || ""}
-            onChange={(event) =>
-              setProfileDraft((prev) => ({ ...prev, workEmail: event.target.value }))
-            }
-          />
-          <Input
-            placeholder="Personal email *"
-            value={profileDraft.personalEmail || ""}
-            onChange={(event) =>
-              setProfileDraft((prev) => ({ ...prev, personalEmail: event.target.value }))
-            }
-          />
-          <Input
-            placeholder="Address *"
-            value={profileDraft.address || ""}
-            onChange={(event) =>
-              setProfileDraft((prev) => ({ ...prev, address: event.target.value }))
-            }
-          />
+          <div className="space-y-1">
+            <p className="text-xs uppercase tracking-[0.2em] text-sand-500">Full name *</p>
+            <Input
+              placeholder="Enter full name"
+              value={profileDraft.fullName || ""}
+              onChange={(event) =>
+                setProfileDraft((prev) => ({ ...prev, fullName: event.target.value }))
+              }
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs uppercase tracking-[0.2em] text-sand-500">Work email *</p>
+            <Input
+              placeholder="Enter work email"
+              value={profileDraft.workEmail || ""}
+              onChange={(event) =>
+                setProfileDraft((prev) => ({ ...prev, workEmail: event.target.value }))
+              }
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs uppercase tracking-[0.2em] text-sand-500">Personal email *</p>
+            <Input
+              placeholder="Enter personal email"
+              value={profileDraft.personalEmail || ""}
+              onChange={(event) =>
+                setProfileDraft((prev) => ({ ...prev, personalEmail: event.target.value }))
+              }
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs uppercase tracking-[0.2em] text-sand-500">Address *</p>
+            <Input
+              placeholder="Enter address"
+              value={profileDraft.address || ""}
+              onChange={(event) =>
+                setProfileDraft((prev) => ({ ...prev, address: event.target.value }))
+              }
+            />
+          </div>
         </div>
       ) : (
         <>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Input
-              placeholder="Phone number"
-              value={profileDraft.phone || ""}
-              onChange={(event) =>
-                setProfileDraft((prev) => ({ ...prev, phone: event.target.value }))
-              }
-            />
-            <Input
-              placeholder="Citizenship number"
-              value={profileDraft.citizenshipNumber || ""}
-              onChange={(event) =>
-                setProfileDraft((prev) => ({ ...prev, citizenshipNumber: event.target.value }))
-              }
-            />
+            <div className="space-y-1">
+              <p className="text-xs uppercase tracking-[0.2em] text-sand-500">Phone number</p>
+              <Input
+                placeholder="Enter phone number"
+                value={profileDraft.phone || ""}
+                onChange={(event) =>
+                  setProfileDraft((prev) => ({ ...prev, phone: event.target.value }))
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs uppercase tracking-[0.2em] text-sand-500">Citizenship number</p>
+              <Input
+                placeholder="Enter citizenship number"
+                value={profileDraft.citizenshipNumber || ""}
+                onChange={(event) =>
+                  setProfileDraft((prev) => ({ ...prev, citizenshipNumber: event.target.value }))
+                }
+              />
+            </div>
           </div>
           <div className="space-y-4">
             <label className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
               <Image className="mx-auto h-5 w-5 text-sand-700" />
-              <p className="text-sm font-semibold text-sand-900">Profile photo</p>
+              <p className="text-sm font-semibold text-sand-900">Passport size photo</p>
               <p className="mt-1 text-xs text-sand-500">
-                {profileDraft.profilePhotoUrl ? "Update image" : "Browse files"}
+                {profileDraft.passportSizePhotoUrl ? "Update image" : "Browse files"}
               </p>
-              {profileDraft.profilePhotoUrl || profileImageFileNames.profilePhotoUrl ? (
+              {profileDraft.passportSizePhotoUrl || profileImageFileNames.passportSizePhotoUrl ? (
                 <p className="mt-1 text-xs text-sand-500">
-                  {profileImageFileNames.profilePhotoUrl ||
-                    getFileNameFromUrl(profileDraft.profilePhotoUrl) ||
+                  {profileImageFileNames.passportSizePhotoUrl ||
+                    getFileNameFromUrl(profileDraft.passportSizePhotoUrl) ||
                     "Uploaded image"}
                 </p>
               ) : null}
@@ -112,10 +130,10 @@ export const OnboardingPage = ({
                 type="file"
                 accept="image/*"
                 onChange={(event) =>
-                  handleProfileImageUpload("profilePhotoUrl", event.target.files?.[0])
+                  handleProfileImageUpload("passportSizePhotoUrl", event.target.files?.[0])
                 }
               />
-              {profileDraft.profilePhotoUrl ? (
+              {profileDraft.passportSizePhotoUrl ? (
                 <span className="mt-3 inline-flex rounded-full border border-sand-300 px-3 py-1 text-xs font-semibold text-sand-700">
                   Change image
                 </span>

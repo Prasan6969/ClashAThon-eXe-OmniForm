@@ -18,6 +18,7 @@ type ProfileShape = {
   address?: string;
   phone?: string;
   citizenshipNumber?: string;
+  passportSizePhotoUrl?: string;
   profilePhotoUrl?: string;
   citizenshipPhotoUrl?: string;
   customFields?: Record<string, string>;
@@ -30,7 +31,7 @@ export const baseProfileKeys = [
   "address",
   "phone",
   "citizenshipNumber",
-  "profilePhotoUrl",
+  "passportSizePhotoUrl",
   "citizenshipPhotoUrl",
 ] as const;
 
@@ -49,7 +50,15 @@ const aliases: Record<string, string[]> = {
   address: ["homeaddress", "residentialaddress", "location"],
   phone: ["phonenumber", "mobile", "mobilenumber", "contactnumber"],
   citizenshipNumber: ["citizenship", "idnumber", "nationalid"],
-  profilePhotoUrl: ["profilephoto", "avatar", "profileimage"],
+  passportSizePhotoUrl: [
+    "profilephoto",
+    "profilephotourl",
+    "avatar",
+    "profileimage",
+    "passportsizephoto",
+    "passportphoto",
+    "passportsizephotourl",
+  ],
   citizenshipPhotoUrl: ["citizenshipphoto", "idphoto", "documentphoto"],
 };
 
@@ -106,7 +115,7 @@ const readCustom = (profile: ProfileShape, lookupKey: string) => {
 
 const readProfileValue = (profile: ProfileShape, rawKey: string) => {
   const baseKey = resolveBaseKey(rawKey);
-  if (baseKey && profile[baseKey]) {
+  if (baseKey) {
     return String(profile[baseKey] || "");
   }
 

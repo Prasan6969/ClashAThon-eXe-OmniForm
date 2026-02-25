@@ -31,7 +31,12 @@ type AdminBuilderPageProps = {
   setShowCustomComponent: (value: boolean) => void;
   builderComponents: BuilderPaletteComponent[];
   setComponentContextMenu: Dispatch<
-    SetStateAction<{ x: number; y: number; componentId: string } | null>
+    SetStateAction<{
+      x: number;
+      y: number;
+      componentId: string;
+      target: "palette" | "form";
+    } | null>
   >;
   formComponents: FormBuilderComponent[];
   setFormComponents: Dispatch<SetStateAction<FormBuilderComponent[]>>;
@@ -157,6 +162,7 @@ export const AdminBuilderPage = ({
                     x: event.clientX,
                     y: event.clientY,
                     componentId: component.id,
+                    target: "palette",
                   });
                 }}
                 onDragStart={(event) => {
@@ -229,6 +235,15 @@ export const AdminBuilderPage = ({
                 ) : null}
                 <div
                   draggable
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    setComponentContextMenu({
+                      x: event.clientX,
+                      y: event.clientY,
+                      componentId: component.id,
+                      target: "form",
+                    });
+                  }}
                   onDragStart={(event) => {
                     event.dataTransfer.setData("reorder", component.id);
                     setDraggingComponentId(component.id);
@@ -290,6 +305,12 @@ export const AdminBuilderPage = ({
                 <div className="mt-3 rounded-2xl border border-dashed border-sand-200 bg-sand-50 p-3">
                   {component.type === "select" ? (
                     <p className="text-xs text-sand-500">Select: {component.options || "No options"}</p>
+                  ) : component.type === "radio" ? (
+                    <p className="text-xs text-sand-500">Radio group: {component.options || "No options"}</p>
+                  ) : component.type === "checkbox" ? (
+                    <p className="text-xs text-sand-500">Checkbox group: {component.options || "No options"}</p>
+                  ) : component.type === "combobox" ? (
+                    <p className="text-xs text-sand-500">Searchable combobox: {component.options || "No options"}</p>
                   ) : component.type === "date" ? (
                     <p className="text-xs text-sand-500">Date picker</p>
                   ) : component.type === "email" ? (
@@ -343,11 +364,18 @@ export const AdminBuilderPage = ({
                     <option value="date">date</option>
                     <option value="number">number</option>
                     <option value="select">select</option>
+                    <option value="radio">radio</option>
+                    <option value="checkbox">checkbox</option>
+                    <option value="combobox">combobox</option>
                     <option value="image">image</option>
                     <option value="map">map</option>
                   </Select>
                   <Input
-                    placeholder="Options (comma)"
+                    placeholder={
+                      component.type === "image"
+                        ? "Image rules (e.g., jpg,png,300x400)"
+                        : "Options (comma)"
+                    }
                     value={component.options}
                     onChange={(event) => {
                       setFormComponents((prev) =>
@@ -358,6 +386,11 @@ export const AdminBuilderPage = ({
                       setFormDraftTouchedAt(Date.now());
                     }}
                   />
+                  {component.type === "image" ? (
+                    <p className="text-xs text-sand-500 sm:col-span-2">
+                      Image rules: comma separated formats plus optional exact size, e.g. jpg,png,300x400.
+                    </p>
+                  ) : null}
                 </div>
               </div>
             ))}

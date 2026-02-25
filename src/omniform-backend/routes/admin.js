@@ -22,7 +22,25 @@ const slugify = (value) =>
     .replace(/[^a-z0-9\s-]/g, "")
     .replace(/\s+/g, "-");
 
-const TAG_TYPES = ["text", "email", "date", "number", "image", "select", "map"];
+const TAG_TYPES = [
+  "text",
+  "email",
+  "date",
+  "number",
+  "image",
+  "select",
+  "radio",
+  "checkbox",
+  "combobox",
+  "map",
+];
+const TAG_TYPES_WITH_OPTIONS = new Set([
+  "select",
+  "radio",
+  "checkbox",
+  "combobox",
+  "image",
+]);
 
 const normalizeTagPayload = (payload = {}) => {
   const label = sanitizeString(payload.label, 120);
@@ -53,7 +71,7 @@ const normalizeTagPayload = (payload = {}) => {
       label,
       tag,
       type,
-      options: type === "select" ? options : [],
+      options: TAG_TYPES_WITH_OPTIONS.has(type) ? options : [],
     },
   };
 };

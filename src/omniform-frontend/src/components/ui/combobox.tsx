@@ -64,8 +64,8 @@ export const ComboBox = ({
             onFocus={() => setOpen(true)}
             onBlur={() => setOpen(false)}
           />
-          {open && query.trim().length ? (
-            <div className="absolute left-0 right-0 z-10 mt-2 max-h-56 overflow-auto rounded-2xl border border-sand-300 bg-sand-50 shadow-lg">
+          {open ? (
+            <div className="absolute left-0 right-0 z-10 mt-2 max-h-[11.5rem] overflow-auto rounded-2xl border border-sand-300 bg-sand-50 shadow-lg">
               {filtered.length ? (
                 filtered.map((option) => (
                   <button

@@ -4,7 +4,7 @@ import {
   SignInButton,
   SignOutButton,
 } from "@clerk/clerk-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Home, Search, User } from "lucide-react";
 import { Button } from "./components/ui/button";
@@ -23,6 +23,7 @@ import {
   ensureProfileCustomKeys,
   mapSubmissionData,
   mergeCandidatesIntoProfile,
+  normalizeKey,
   toProfileTag,
 } from "./utils/profile-autofill";
 import type { SaveCandidate } from "./utils/profile-autofill";
@@ -67,6 +68,7 @@ export default function App() {
   const { user, isLoaded } = useUser();
   const { getToken } = useAuth();
   const role = user?.publicMetadata?.role || "user";
+  const actionLocksRef = useRef<Record<string, boolean>>({});
   const apiBase = useMemo(
     () => import.meta.env.VITE_API_URL || "http://localhost:5000",
     []
@@ -106,6 +108,7 @@ export default function App() {
     x: number;
     y: number;
     componentId: string;
+    target: "palette" | "form";
   } | null>(null);
   const [customComponent, setCustomComponent] = useState<CustomComponentDraft>({
     label: "",
@@ -182,6 +185,9 @@ export default function App() {
     useState<UserSubmissionDetail | null>(null);
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [autofillUncoveredFields, setAutofillUncoveredFields] = useState<
+    Record<string, boolean>
+  >({});
   const [componentSearch, setComponentSearch] = useState("");
   const [showSavePrompt, setShowSavePrompt] = useState(false);
   const [showCooldownPrompt, setShowCooldownPrompt] = useState(false);
@@ -200,6 +206,12 @@ export default function App() {
   const [formImageFileNames, setFormImageFileNames] = useState<
     Record<string, string>
   >({});
+  const [pendingProfileImageFiles, setPendingProfileImageFiles] = useState<
+    Record<string, File>
+  >({});
+  const [pendingFormImageFiles, setPendingFormImageFiles] = useState<
+    Record<string, File>
+  >({});
   const [profileDraft, setProfileDraft] = useState<Profile>({
     fullName: "",
     workEmail: "",
@@ -207,7 +219,7 @@ export default function App() {
     address: "",
     phone: "",
     citizenshipNumber: "",
-    profilePhotoUrl: "",
+    passportSizePhotoUrl: "",
     citizenshipPhotoUrl: "",
     customFields: {},
   });
@@ -338,6 +350,21 @@ export default function App() {
     return payload;
   };
 
+  const runWithActionLock = async <T,>(
+    key: string,
+    action: () => Promise<T>
+  ) => {
+    if (actionLocksRef.current[key]) {
+      return undefined;
+    }
+    actionLocksRef.current[key] = true;
+    try {
+      return await action();
+    } finally {
+      actionLocksRef.current[key] = false;
+    }
+  };
+
   const authedFetch = async (path: string, options?: RequestInit) => {
     const token = await getToken();
     const response = await fetch(`${apiBase}${path}`, {
@@ -404,17 +431,118 @@ export default function App() {
     }
   };
 
+  const parseImageUploadRules = (options: string[] = []) => {
+    const normalized = options
+      .map((item) => String(item || "").trim().toLowerCase())
+      .filter(Boolean);
+
+    const requiredDimensions = (() => {
+      const found = normalized.find((item) => /^\d{1,5}x\d{1,5}$/.test(item));
+      if (!found) return null;
+      const [width, height] = found.split("x").map((value) => Number(value));
+      if (!Number.isFinite(width) || !Number.isFinite(height)) return null;
+      return { width, height };
+    })();
+
+    const allowedExtensions = new Set(
+      normalized
+        .filter((item) => !/^\d{1,5}x\d{1,5}$/.test(item))
+        .map((item) => item.replace(/^\./, ""))
+    );
+
+    return { requiredDimensions, allowedExtensions };
+  };
+
+  const readImageDimensions = (file: File) =>
+    new Promise<{ width: number; height: number }>((resolve, reject) => {
+      const image = new window.Image();
+      const objectUrl = URL.createObjectURL(file);
+      image.onload = () => {
+        resolve({ width: image.width, height: image.height });
+        URL.revokeObjectURL(objectUrl);
+      };
+      image.onerror = () => {
+        reject(new Error("Unable to read image dimensions."));
+        URL.revokeObjectURL(objectUrl);
+      };
+      image.src = objectUrl;
+    });
+
+  const validateImageFile = async (file: File, options: string[] = []) => {
+    const { requiredDimensions, allowedExtensions } = parseImageUploadRules(options);
+
+    if (allowedExtensions.size) {
+      const ext = String(file.name || "")
+        .split(".")
+        .pop()
+        ?.toLowerCase();
+      if (!ext || !allowedExtensions.has(ext)) {
+        throw new Error(
+          `Invalid file format. Allowed: ${Array.from(allowedExtensions).join(", ")}`
+        );
+      }
+    }
+
+    if (requiredDimensions) {
+      const dimensions = await readImageDimensions(file);
+      if (
+        dimensions.width !== requiredDimensions.width ||
+        dimensions.height !== requiredDimensions.height
+      ) {
+        throw new Error(
+          `Image must be exactly ${requiredDimensions.width}x${requiredDimensions.height}px.`
+        );
+      }
+    }
+  };
+
   const getProfileImageValue = (
     source: Profile,
-    key: "profilePhotoUrl"
+    key: "passportSizePhotoUrl"
   ) => {
-    const direct = source[key];
-    if (direct) return direct;
+    const hasCanonical = Object.prototype.hasOwnProperty.call(source, key);
+    if (hasCanonical) {
+      return String(source[key] || "");
+    }
+
+    const legacy = String(source.profilePhotoUrl || "");
+    if (legacy) return legacy;
 
     const custom = source.customFields || {};
-    if (custom[key]) return custom[key];
+    if (Object.prototype.hasOwnProperty.call(custom, key)) {
+      return String(custom[key] || "");
+    }
+    if (custom.profilePhotoUrl) return String(custom.profilePhotoUrl || "");
+    const passportAliasCustomKey = Object.keys(custom).find((customKey) =>
+      [
+        "passportsizephoto",
+        "passportphoto",
+        "passportsizephotourl",
+        "profilephoto",
+        "profilephotourl",
+        "profileimage",
+        "avatar",
+      ].includes(normalizeKey(customKey))
+    );
+    if (passportAliasCustomKey) {
+      return String(custom[passportAliasCustomKey] || "");
+    }
     return "";
   };
+
+  const isPassportImageAlias = (tag: string) =>
+    [
+      "passportsizephoto",
+      "passportphoto",
+      "passportsizephotourl",
+      "profilephoto",
+      "profilephotourl",
+      "profileimage",
+      "avatar",
+    ].includes(normalizeKey(tag));
+
+  const resolveProfileDraftTag = (tag: string) =>
+    isPassportImageAlias(tag) ? "passportSizePhotoUrl" : tag;
 
   const getSubmissionFieldType = (
     submission: UserSubmissionDetail | OrgSubmissionDetail,
@@ -505,15 +633,23 @@ export default function App() {
     (baseProfileKeys as readonly string[]).includes(key);
 
   const getProfileTagFieldValue = (tag: string) => {
-    if (isBaseProfileKey(tag)) {
-      return String(profileDraft[tag] || "");
+    const resolvedTag = resolveProfileDraftTag(tag);
+    if (isBaseProfileKey(resolvedTag)) {
+      return String(profileDraft[resolvedTag] || "");
     }
-    return String(profileDraft.customFields?.[tag] || "");
+    return String(profileDraft.customFields?.[resolvedTag] || "");
   };
 
   const setProfileTagFieldValue = (tag: string, value: string) => {
-    if (isBaseProfileKey(tag)) {
-      setProfileDraft((prev) => ({ ...prev, [tag]: value }));
+    const resolvedTag = resolveProfileDraftTag(tag);
+    if (isBaseProfileKey(resolvedTag)) {
+      setProfileDraft((prev) => ({
+        ...prev,
+        [resolvedTag]: value,
+        ...(resolvedTag === "passportSizePhotoUrl"
+          ? { profilePhotoUrl: value }
+          : {}),
+      }));
       return;
     }
 
@@ -521,110 +657,219 @@ export default function App() {
       ...prev,
       customFields: {
         ...(prev.customFields || {}),
-        [tag]: value,
+        [resolvedTag]: value,
       },
     }));
   };
 
   const handleProfileImageUpload = async (
     field: ProfileImageField,
-    file?: File
+    file?: File,
+    options: string[] = []
   ) => {
     if (!file) return;
     try {
       setProfileMessage("");
-      setUploadingImageTarget(field);
+      await validateImageFile(file, options);
       setProfileImageFileNames((prev) => ({
         ...prev,
         [field]: file.name,
       }));
-      const uploadedUrl = await uploadToImageKit(file, "/omniform/profile-documents");
-      const nextProfileDraft: Profile = {
-        ...profileDraft,
-        [field]: uploadedUrl,
-      };
-
-      setProfileDraft(nextProfileDraft);
-
-      const payload = await authedFetch("/api/profile/me", {
-        method: "PUT",
-        body: JSON.stringify(nextProfileDraft),
-      });
-      setProfile(payload.data || null);
-      setProfileDraft((payload.data as Profile) || nextProfileDraft);
-      setProfileMessage("Image uploaded and saved.");
+      setPendingProfileImageFiles((prev) => ({
+        ...prev,
+        [field]: file,
+      }));
+      setProfileDraft((prev) => ({
+        ...prev,
+        [field]: URL.createObjectURL(file),
+      }));
+      setProfileMessage("Image selected. It will upload when you save profile.");
     } catch (error) {
       setProfileMessage(
         error instanceof Error ? error.message : "Image upload failed."
       );
-    } finally {
-      setUploadingImageTarget("");
     }
   };
 
-  const handleFormImageUpload = async (fieldKey: string, file?: File) => {
+  const handleFormImageUpload = async (
+    fieldKey: string,
+    file?: File,
+    options: string[] = []
+  ) => {
     if (!file) return;
     try {
       setSubmitMessage("");
-      setUploadingImageTarget(`form:${fieldKey}`);
+      await validateImageFile(file, options);
       setFormImageFileNames((prev) => ({
         ...prev,
         [fieldKey]: file.name,
       }));
-      const uploadedUrl = await uploadToImageKit(file, "/omniform/form-submissions");
+      setPendingFormImageFiles((prev) => ({
+        ...prev,
+        [fieldKey]: file,
+      }));
       setFormValues((prev) => ({
         ...prev,
-        [fieldKey]: uploadedUrl,
+        [fieldKey]: URL.createObjectURL(file),
       }));
+      setSubmitMessage("Image selected. It will upload when you submit.");
     } catch (error) {
       setSubmitMessage(
         error instanceof Error ? error.message : "Image upload failed."
       );
-    } finally {
-      setUploadingImageTarget("");
     }
   };
 
-  const handleProfileTagImageUpload = async (tag: string, file?: File) => {
+  const handleProfileTagImageUpload = async (
+    tag: string,
+    file?: File,
+    options: string[] = []
+  ) => {
     if (!file) return;
+    const resolvedTag = resolveProfileDraftTag(tag);
     try {
       setProfileMessage("");
-      setUploadingImageTarget(`tag:${tag}`);
-      setProfileImageFileNames((prev) => ({ ...prev, [tag]: file.name }));
-      const uploadedUrl = await uploadToImageKit(file, "/omniform/profile-documents");
+      await validateImageFile(file, options);
+      setProfileImageFileNames((prev) => ({ ...prev, [resolvedTag]: file.name }));
+      setPendingProfileImageFiles((prev) => ({
+        ...prev,
+        [resolvedTag]: file,
+      }));
 
-      const nextProfileDraft: Profile = isBaseProfileKey(tag)
-        ? { ...profileDraft, [tag]: uploadedUrl }
+      const nextProfileDraft: Profile = isBaseProfileKey(resolvedTag)
+        ? {
+            ...profileDraft,
+            [resolvedTag]: URL.createObjectURL(file),
+            ...(resolvedTag === "passportSizePhotoUrl"
+              ? { profilePhotoUrl: URL.createObjectURL(file) }
+              : {}),
+          }
         : {
             ...profileDraft,
             customFields: {
               ...(profileDraft.customFields || {}),
-              [tag]: uploadedUrl,
+              [resolvedTag]: URL.createObjectURL(file),
             },
           };
 
       setProfileDraft(nextProfileDraft);
-
-      const payload = await authedFetch("/api/profile/me", {
-        method: "PUT",
-        body: JSON.stringify(nextProfileDraft),
-      });
-      setProfile(payload.data || null);
-      setProfileDraft((payload.data as Profile) || nextProfileDraft);
-      setProfileMessage("Image uploaded and saved.");
+      setProfileMessage("Image selected. It will upload when you save profile.");
     } catch (error) {
       setProfileMessage(
         error instanceof Error ? error.message : "Image upload failed."
       );
-    } finally {
-      setUploadingImageTarget("");
     }
+  };
+
+  const handleProfileTagImageDelete = async (tag: string) => {
+    const resolvedTag = resolveProfileDraftTag(tag);
+    await runWithActionLock(`profile-image-delete:${tag}`, async () => {
+      const currentValue = String(getProfileTagFieldValue(resolvedTag) || "").trim();
+      if (!currentValue) return;
+
+      try {
+        setProfileMessage("");
+
+        if (/^https?:\/\//i.test(currentValue)) {
+          await authedFetch("/api/uploads/imagekit-file", {
+            method: "DELETE",
+            body: JSON.stringify({ url: currentValue }),
+          });
+        }
+
+        const nextProfileDraft: Profile =
+          resolvedTag === "passportSizePhotoUrl"
+            ? {
+                ...profileDraft,
+                passportSizePhotoUrl: "",
+                profilePhotoUrl: "",
+              }
+            : isBaseProfileKey(resolvedTag)
+            ? { ...profileDraft, [resolvedTag]: "" }
+            : {
+                ...profileDraft,
+                customFields: {
+                  ...(profileDraft.customFields || {}),
+                  [resolvedTag]: "",
+                },
+              };
+
+        const payload = await authedFetch("/api/profile/me", {
+          method: "PUT",
+          body: JSON.stringify(nextProfileDraft),
+        });
+
+        setProfile(payload.data || null);
+        setProfileDraft((payload.data as Profile) || nextProfileDraft);
+        setPendingProfileImageFiles((prev) => {
+          const next = { ...prev };
+          delete next[resolvedTag];
+          return next;
+        });
+        setProfileImageFileNames((prev) => {
+          const next = { ...prev };
+          delete next[resolvedTag];
+          return next;
+        });
+        setProfileMessage("Image deleted.");
+      } catch (error) {
+        setProfileMessage(
+          error instanceof Error ? error.message : "Failed to delete image."
+        );
+      }
+    });
+  };
+
+  const uploadPendingProfileImages = async (draft: Profile) => {
+    const entries = Object.entries(pendingProfileImageFiles);
+    if (!entries.length) return draft;
+
+    const nextDraft: Profile = {
+      ...draft,
+      customFields: {
+        ...(draft.customFields || {}),
+      },
+    };
+
+    for (const [key, file] of entries) {
+      if (!file) continue;
+      setUploadingImageTarget(
+        isBaseProfileKey(key) ? key : `tag:${key}`
+      );
+      const uploadedUrl = await uploadToImageKit(file, "/omniform/profile-documents");
+      if (key === "passportSizePhotoUrl" || key === "profilePhotoUrl") {
+        nextDraft.passportSizePhotoUrl = uploadedUrl;
+      } else if (key === "citizenshipPhotoUrl") {
+        nextDraft.citizenshipPhotoUrl = uploadedUrl;
+      } else {
+        nextDraft.customFields = {
+          ...(nextDraft.customFields || {}),
+          [key]: uploadedUrl,
+        };
+      }
+    }
+
+    return nextDraft;
+  };
+
+  const uploadPendingFormImages = async () => {
+    const entries = Object.entries(pendingFormImageFiles);
+    if (!entries.length) return formValues;
+
+    const nextValues = { ...formValues };
+    for (const [fieldKey, file] of entries) {
+      if (!file) continue;
+      setUploadingImageTarget(`form:${fieldKey}`);
+      const uploadedUrl = await uploadToImageKit(file, "/omniform/form-submissions");
+      nextValues[fieldKey] = uploadedUrl;
+    }
+    return nextValues;
   };
 
   const loadAdminTags = async () => {
     try {
       const payload = await adminFetch("/api/admin/tags", { method: "GET" });
-      setAdminTags(payload.data || []);
+      setAdminTags(normalizeTagDefinitions((payload.data || []) as TagDefinition[]));
     } catch (error) {
       setAdminTags([]);
     }
@@ -674,7 +919,7 @@ export default function App() {
 
   const handleStartEditTag = (item: TagDefinition) => {
     setEditingTagId(item._id);
-    setTagLabel(item.label);
+    setTagLabel(normalizeTagLabel(item));
     setTagValue(item.tag);
     setTagType(item.type);
     setTagOptions((item.options || []).join(", "));
@@ -764,15 +1009,36 @@ export default function App() {
     }
   };
 
+  const normalizeTagLabel = (item: TagDefinition) =>
+    item.tag === "profilePhotoUrl" || item.tag === "passportSizePhotoUrl"
+      ? "Passport size photo"
+      : item.label;
+
+  const normalizeTagKey = (tag: string) =>
+    isPassportImageAlias(tag) ? "passportSizePhotoUrl" : tag;
+
+  const normalizeTagDefinitions = (items: TagDefinition[]) =>
+    items.map((item) => ({
+      ...item,
+      tag: normalizeTagKey(item.tag),
+      label: normalizeTagLabel(item),
+    }));
+
   const coerceTagType = (value: string): TagDefinition["type"] => {
     if (value === "email") return "email";
     if (value === "date") return "date";
     if (value === "number") return "number";
     if (value === "image") return "image";
     if (value === "select") return "select";
+    if (value === "radio") return "radio";
+    if (value === "checkbox") return "checkbox";
+    if (value === "combobox") return "combobox";
     if (value === "map") return "map";
     return "text";
   };
+
+  const supportsOptions = (type: TagDefinition["type"]) =>
+    ["select", "radio", "checkbox", "combobox", "image"].includes(type);
 
   const splitComponentOptions = (rawOptions: string) =>
     rawOptions
@@ -805,15 +1071,19 @@ export default function App() {
           label: payload.label,
           tag: normalizedTag,
           type: payload.type,
-          options: payload.type === "select" ? payload.options : [],
+          options: supportsOptions(payload.type) ? payload.options : [],
         }),
       });
 
       const nextTag = created?.data as TagDefinition | undefined;
       if (nextTag?._id) {
         setAdminTags((prev) => {
-          if (prev.some((item) => item.tag === nextTag.tag)) return prev;
-          return [...prev, nextTag].sort((a, b) =>
+          const normalizedNextTag = {
+            ...nextTag,
+            label: normalizeTagLabel(nextTag),
+          };
+          if (prev.some((item) => item.tag === normalizedNextTag.tag)) return prev;
+          return [...prev, normalizedNextTag].sort((a, b) =>
             (a.label || "").localeCompare(b.label || "")
           );
         });
@@ -847,15 +1117,6 @@ export default function App() {
           const normalizedTag = component.tag.trim() || toProfileTag(cleanLabel);
           const normalizedType = coerceTagType(component.type.trim() || "text");
           const normalizedOptions = splitComponentOptions(component.options);
-
-          if (normalizedTag) {
-            await upsertSystemTag({
-              label: cleanLabel,
-              tag: normalizedTag,
-              type: normalizedType,
-              options: normalizedOptions,
-            });
-          }
 
           return {
             id: component.id,
@@ -1335,6 +1596,7 @@ export default function App() {
       );
       setFormValues(initialValues);
       setFormErrors({});
+      setAutofillUncoveredFields({});
       setSubmitMessage("");
       navigate(`/forms/${form._id}`);
     } catch (error) {
@@ -1349,8 +1611,17 @@ export default function App() {
   const handleAutofill = () => {
     if (!activeForm) return;
     const autofilled = buildAutofillPayload(activeForm, profileDraft);
+    const components = (activeForm.components || activeForm.fields || []) as FormField[];
+    const uncovered = components.reduce<Record<string, boolean>>((acc, field, index) => {
+      const fieldKey = field.id || field.tag || `field-${index}`;
+      if (!String(autofilled[fieldKey] || "").trim()) {
+        acc[fieldKey] = true;
+      }
+      return acc;
+    }, {});
     setFormValues((prev) => ({ ...prev, ...autofilled }));
     setFormErrors({});
+    setAutofillUncoveredFields(uncovered);
   };
 
   const completeSubmission = async (
@@ -1383,6 +1654,8 @@ export default function App() {
     setSaveCandidates([]);
     setSelectedSaveCandidateKeys({});
     setPendingSubmissionData(null);
+    setPendingFormImageFiles({});
+    setFormImageFileNames({});
     navigate("/");
 
     const payload = await authedFetch("/api/submissions/me");
@@ -1390,47 +1663,58 @@ export default function App() {
   };
 
   const handleSubmitForm = async () => {
-    if (!selectedOrg || !activeForm) return;
-    try {
-      setSubmitMessage("");
-      const components = activeForm.components || activeForm.fields || [];
-      const missingRequired = components
-        .filter((field) => field.required)
-        .reduce<Record<string, string>>((acc, field, index) => {
-          const fieldKey = field.id || field.tag || `field-${index}`;
-          if (!formValues[fieldKey]) {
-            acc[fieldKey] = `${field.label} is required`;
-          }
-          return acc;
-        }, {});
+    await runWithActionLock("submit-form", async () => {
+      if (!selectedOrg || !activeForm) return;
+      try {
+        setSubmitMessage("");
+        const components = activeForm.components || activeForm.fields || [];
+        const missingRequired = components
+          .filter((field) => field.required)
+          .reduce<Record<string, string>>((acc, field, index) => {
+            const fieldKey = field.id || field.tag || `field-${index}`;
+            if (!formValues[fieldKey]) {
+              acc[fieldKey] = `${field.label} is required`;
+            }
+            return acc;
+          }, {});
 
-      if (Object.keys(missingRequired).length) {
-        setFormErrors(missingRequired);
-        setSubmitMessage("Please complete required fields.");
-        return;
+        if (Object.keys(missingRequired).length) {
+          setFormErrors(missingRequired);
+          setSubmitMessage("Please complete required fields.");
+          return;
+        }
+        const resolvedFormValues = await uploadPendingFormImages();
+        setFormValues(resolvedFormValues);
+
+        const data = mapSubmissionData(activeForm, resolvedFormValues);
+        const candidates = collectUnsavedCandidates(
+          activeForm,
+          resolvedFormValues,
+          profileDraft
+        );
+
+        if (!candidates.length) {
+          await completeSubmission(data);
+          return;
+        }
+
+        setPendingSubmissionData(data);
+        setSaveCandidates(candidates);
+        setSelectedSaveCandidateKeys(
+          candidates.reduce<Record<string, boolean>>((acc, item) => {
+            acc[item.key] = true;
+            return acc;
+          }, {})
+        );
+        setShowSavePrompt(true);
+      } catch (error) {
+        setSubmitMessage(
+          error instanceof Error ? error.message : "Submission failed."
+        );
+      } finally {
+        setUploadingImageTarget("");
       }
-      const data = mapSubmissionData(activeForm, formValues);
-      const candidates = collectUnsavedCandidates(activeForm, formValues, profileDraft);
-
-      if (!candidates.length) {
-        await completeSubmission(data);
-        return;
-      }
-
-      setPendingSubmissionData(data);
-      setSaveCandidates(candidates);
-      setSelectedSaveCandidateKeys(
-        candidates.reduce<Record<string, boolean>>((acc, item) => {
-          acc[item.key] = true;
-          return acc;
-        }, {})
-      );
-      setShowSavePrompt(true);
-    } catch (error) {
-      setSubmitMessage(
-        error instanceof Error ? error.message : "Submission failed."
-      );
-    }
+    });
   };
 
   const handleCancelSubmission = async (submissionId: string) => {
@@ -1479,22 +1763,30 @@ export default function App() {
   };
 
   const handleProfileSave = async () => {
-    try {
-      setProfileMessage("");
-      const payload = await authedFetch("/api/profile/me", {
-        method: "PUT",
-        body: JSON.stringify({
-          ...profileDraft,
-        }),
-      });
-      setProfile(payload.data || null);
-      setProfileDraft((payload.data as Profile) || profileDraft);
-      setProfileMessage("Profile saved.");
-    } catch (error) {
-      setProfileMessage(
-        error instanceof Error ? error.message : "Failed to save profile."
-      );
-    }
+    await runWithActionLock("profile-save", async () => {
+      try {
+        setProfileMessage("");
+
+        const profileToSave = await uploadPendingProfileImages(profileDraft);
+
+        const payload = await authedFetch("/api/profile/me", {
+          method: "PUT",
+          body: JSON.stringify({
+            ...profileToSave,
+          }),
+        });
+        setProfile(payload.data || null);
+        setProfileDraft((payload.data as Profile) || profileToSave);
+        setPendingProfileImageFiles({});
+        setProfileMessage("Profile saved.");
+      } catch (error) {
+        setProfileMessage(
+          error instanceof Error ? error.message : "Failed to save profile."
+        );
+      } finally {
+        setUploadingImageTarget("");
+      }
+    });
   };
 
   const handleOnboardingNext = async () => {
@@ -1522,16 +1814,61 @@ export default function App() {
     navigate("/", { replace: true });
   };
 
+  const resolveSelectedProfileCandidates = async (selected: SaveCandidate[]) => {
+    if (!activeForm) return selected;
+
+    const components = (activeForm.components || activeForm.fields || []) as FormField[];
+    const fieldKeyByLogicalKey = components.reduce<Record<string, string>>(
+      (acc, field, index) => {
+        const logicalKey = normalizeKey(field.tag || field.id || toProfileTag(field.label));
+        const fieldKey = field.id || field.tag || `field-${index}`;
+        if (logicalKey) {
+          acc[logicalKey] = fieldKey;
+        }
+        return acc;
+      },
+      {}
+    );
+
+    const resolved: SaveCandidate[] = [];
+    for (const item of selected) {
+      const logicalKey = normalizeKey(item.key);
+      const fieldKey = fieldKeyByLogicalKey[logicalKey];
+      const pendingFile = fieldKey ? pendingFormImageFiles[fieldKey] : undefined;
+
+      if (!pendingFile) {
+        resolved.push(item);
+        continue;
+      }
+
+      const profileImageUrl = await uploadToImageKit(
+        pendingFile,
+        "/omniform/profile-documents"
+      );
+      resolved.push({
+        ...item,
+        value: profileImageUrl,
+      });
+    }
+
+    return resolved;
+  };
+
   const handleSaveMissing = async () => {
-    if (!pendingSubmissionData) return;
-    const selected = saveCandidates.filter((item) => selectedSaveCandidateKeys[item.key]);
-    const profileToSave = mergeCandidatesIntoProfile(profileDraft, selected);
-    await completeSubmission(pendingSubmissionData, profileToSave);
+    await runWithActionLock("submit-with-save", async () => {
+      if (!pendingSubmissionData) return;
+      const selected = saveCandidates.filter((item) => selectedSaveCandidateKeys[item.key]);
+      const resolvedSelected = await resolveSelectedProfileCandidates(selected);
+      const profileToSave = mergeCandidatesIntoProfile(profileDraft, resolvedSelected);
+      await completeSubmission(pendingSubmissionData, profileToSave);
+    });
   };
 
   const handleSubmitWithoutSaving = async () => {
-    if (!pendingSubmissionData) return;
-    await completeSubmission(pendingSubmissionData);
+    await runWithActionLock("submit-without-save", async () => {
+      if (!pendingSubmissionData) return;
+      await completeSubmission(pendingSubmissionData);
+    });
   };
 
   useEffect(() => {
@@ -1642,7 +1979,7 @@ export default function App() {
           adminFetch("/api/admin/tags", { method: "GET" }),
         ]);
         setAdminOrgs(orgPayload.data || []);
-        setAdminTags(tagPayload.data || []);
+        setAdminTags(normalizeTagDefinitions((tagPayload.data || []) as TagDefinition[]));
       } catch (error) {
         setAdminOrgs([]);
         setAdminTags([]);
@@ -1660,7 +1997,9 @@ export default function App() {
           authedFetch("/api/profile/me"),
           authedFetch("/api/profile/tags"),
         ]);
-        const loadedTags = (tagPayload?.data || []) as TagDefinition[];
+        const loadedTags = normalizeTagDefinitions(
+          (tagPayload?.data || []) as TagDefinition[]
+        );
         setProfileTags(loadedTags);
         setProfile(profilePayload.data || null);
         const loadedProfile = (profilePayload?.data || {}) as Profile;
@@ -1681,7 +2020,10 @@ export default function App() {
           address: loadedProfile.address || "",
           phone: loadedProfile.phone || "",
           citizenshipNumber: loadedProfile.citizenshipNumber || "",
-          profilePhotoUrl: getProfileImageValue(loadedProfile, "profilePhotoUrl"),
+          passportSizePhotoUrl: getProfileImageValue(
+            loadedProfile,
+            "passportSizePhotoUrl"
+          ),
           citizenshipPhotoUrl: loadedProfile.citizenshipPhotoUrl || "",
           customFields: {
             ...customFieldDefaults,
@@ -2015,6 +2357,7 @@ export default function App() {
                     profileImageFileNames={profileImageFileNames}
                     getFileNameFromUrl={getFileNameFromUrl}
                     handleProfileTagImageUpload={handleProfileTagImageUpload}
+                    handleProfileTagImageDelete={handleProfileTagImageDelete}
                     uploadingImageTarget={uploadingImageTarget}
                     handleProfileSave={handleProfileSave}
                     profileMessage={profileMessage}
@@ -2050,6 +2393,7 @@ export default function App() {
                     formValues={formValues}
                     setFormValues={setFormValues}
                     formErrors={formErrors}
+                    autofillUncoveredFields={autofillUncoveredFields}
                     formImageFileNames={formImageFileNames}
                     getFileNameFromUrl={getFileNameFromUrl}
                     handleFormImageUpload={handleFormImageUpload}
@@ -2356,23 +2700,6 @@ export default function App() {
                 ? selectedTag.options || []
                 : splitComponentOptions(customComponent.options);
 
-              if (nextTag && !selectedTag) {
-                try {
-                  await upsertSystemTag({
-                    label: cleanLabel,
-                    tag: nextTag,
-                    type: normalizedType,
-                    options: normalizedOptions,
-                  });
-                } catch (error) {
-                  setFormMessage(
-                    error instanceof Error
-                      ? error.message
-                      : "Failed to auto-create tag."
-                  );
-                }
-              }
-
               setFormComponents((prev) => [
                 ...prev,
                 {
@@ -2414,11 +2741,29 @@ export default function App() {
         {pendingReusableComponent ? (
           <SaveReusableComponentModal
             componentLabel={pendingReusableComponent.label}
-            onSave={() => {
-              setSavedCustomComponents((prev) => [
-                ...prev,
-                pendingReusableComponent,
-              ]);
+            onSave={async () => {
+              try {
+                setFormMessage("");
+                if (pendingReusableComponent.tag) {
+                  await upsertSystemTag({
+                    label: pendingReusableComponent.label,
+                    tag: pendingReusableComponent.tag,
+                    type: coerceTagType(pendingReusableComponent.type),
+                    options: splitComponentOptions(pendingReusableComponent.options),
+                  });
+                }
+                setSavedCustomComponents((prev) => [
+                  ...prev,
+                  pendingReusableComponent,
+                ]);
+              } catch (error) {
+                setFormMessage(
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to save reusable component."
+                );
+                return;
+              }
               setPendingReusableComponent(null);
             }}
             onSkip={() => setPendingReusableComponent(null)}
@@ -2429,10 +2774,22 @@ export default function App() {
           <ComponentContextMenu
             x={componentContextMenu.x}
             y={componentContextMenu.y}
+            deleteLabel={
+              componentContextMenu.target === "palette"
+                ? "Delete saved component"
+                : "Delete form component"
+            }
             onDelete={() => {
-              setSavedCustomComponents((prev) =>
-                prev.filter((item) => item.id !== componentContextMenu.componentId)
-              );
+              if (componentContextMenu.target === "palette") {
+                setSavedCustomComponents((prev) =>
+                  prev.filter((item) => item.id !== componentContextMenu.componentId)
+                );
+              } else {
+                setFormComponents((prev) =>
+                  prev.filter((item) => item.id !== componentContextMenu.componentId)
+                );
+                setFormDraftTouchedAt(Date.now());
+              }
               setComponentContextMenu(null);
             }}
           />

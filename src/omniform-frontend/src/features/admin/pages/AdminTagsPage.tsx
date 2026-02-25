@@ -81,15 +81,31 @@ export const AdminTagsPage = ({
               <option value="number">number</option>
               <option value="image">image</option>
               <option value="select">select</option>
+              <option value="radio">radio</option>
+              <option value="checkbox">checkbox</option>
+              <option value="combobox">combobox</option>
               <option value="map">map</option>
             </Select>
             <Input
-              placeholder="Select options (comma separated)"
+              placeholder={
+                tagType === "image"
+                  ? "Image rules (e.g., jpg,png,300x400)"
+                  : "Options (comma separated)"
+              }
               value={tagOptions}
               onChange={(event) => setTagOptions(event.target.value)}
-              disabled={tagType !== "select"}
+              disabled={
+                !["select", "radio", "checkbox", "combobox", "image"].includes(
+                  tagType
+                )
+              }
             />
           </div>
+          {tagType === "image" ? (
+            <p className="text-xs text-sand-500">
+              Image rules: comma separated formats plus optional exact size, e.g. jpg,png,300x400.
+            </p>
+          ) : null}
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" onClick={handleCreateTag}>
               {editingTagId ? "Save changes" : "Create tag"}

@@ -7,6 +7,7 @@ const PROFILE_KEYS = [
   "address",
   "phone",
   "citizenshipNumber",
+  "passportSizePhotoUrl",
   "profilePhotoUrl",
   "citizenshipPhotoUrl",
 ];
@@ -52,6 +53,9 @@ const sanitizeFormComponents = (components) => {
     "date",
     "number",
     "select",
+    "radio",
+    "checkbox",
+    "combobox",
     "image",
     "map",
   ]);

@@ -4,6 +4,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { MapPickerModal } from "../../../components/modals/MapPickerModal";
 import { Button } from "../../../components/ui/button";
 import { Card } from "../../../components/ui/card";
+import { ComboBox } from "../../../components/ui/combobox";
 import { Input } from "../../../components/ui/input";
 import { MapPreview } from "../../../components/ui/map-preview";
 import { SectionHeading } from "../../../components/ui/section-heading";
@@ -22,7 +23,12 @@ type ProfilePageProps = {
   setProfileTagFieldValue: (tag: string, value: string) => void;
   profileImageFileNames: Record<string, string>;
   getFileNameFromUrl: (url?: string) => string;
-  handleProfileTagImageUpload: (tag: string, file?: File) => Promise<void>;
+  handleProfileTagImageUpload: (
+    tag: string,
+    file?: File,
+    options?: string[]
+  ) => Promise<void>;
+  handleProfileTagImageDelete: (tag: string) => Promise<void>;
   uploadingImageTarget: string;
   handleProfileSave: () => Promise<void>;
   profileMessage: string;
@@ -41,6 +47,7 @@ export const ProfilePage = ({
   profileImageFileNames,
   getFileNameFromUrl,
   handleProfileTagImageUpload,
+  handleProfileTagImageDelete,
   uploadingImageTarget,
   handleProfileSave,
   profileMessage,
@@ -49,6 +56,10 @@ export const ProfilePage = ({
     tag: string;
     label: string;
     currentValue: string;
+  } | null>(null);
+  const [imageDeleteTarget, setImageDeleteTarget] = useState<{
+    tag: string;
+    label: string;
   } | null>(null);
 
   const readMapLabel = (value: string) => {
@@ -63,6 +74,15 @@ export const ProfilePage = ({
     }
     return value;
   };
+
+  const readMultiValue = (value: string) =>
+    value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+  const passportImageValue = getProfileTagFieldValue("passportSizePhotoUrl");
+  const passportInputId = "profile-passport-size-photo";
 
   return (
   <section className="mx-auto mt-10 max-w-3xl">
@@ -153,6 +173,74 @@ export const ProfilePage = ({
           />
         </div>
       </div>
+      <div className="rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
+        <label htmlFor={passportInputId} className="block w-full cursor-pointer">
+          <Image className="mx-auto h-5 w-5 text-sand-700" />
+          <p className="text-sm font-semibold text-sand-900">Passport size photo</p>
+          <p className="mt-1 text-xs text-sand-500">
+            {passportImageValue ? "Update image" : "Browse files"}
+          </p>
+          {passportImageValue || profileImageFileNames.passportSizePhotoUrl ? (
+            <p className="mt-1 break-all text-xs text-sand-500">
+              {profileImageFileNames.passportSizePhotoUrl ||
+                getFileNameFromUrl(passportImageValue) ||
+                "Uploaded image"}
+            </p>
+          ) : null}
+        </label>
+        <input
+          id={passportInputId}
+          className="hidden"
+          type="file"
+          accept="image/*"
+          onChange={(event) =>
+            handleProfileTagImageUpload(
+              "passportSizePhotoUrl",
+              event.target.files?.[0],
+              []
+            )
+          }
+        />
+        {passportImageValue ? (
+          <a
+            href={passportImageValue}
+            target="_blank"
+            rel="noreferrer"
+            className="mx-auto mt-3 block w-full max-w-full sm:max-w-md"
+          >
+            <img
+              src={passportImageValue}
+              alt="Passport size photo"
+              className="h-40 w-full rounded-xl object-cover sm:h-44"
+            />
+          </a>
+        ) : null}
+        {passportImageValue ? (
+          <div className="mt-3 flex items-center justify-center gap-2">
+            <label
+              htmlFor={passportInputId}
+              className="inline-flex cursor-pointer rounded-full border border-sand-300 px-3 py-1 text-xs font-semibold text-sand-700"
+            >
+              Change image
+            </label>
+            <button
+              type="button"
+              className="inline-flex cursor-pointer rounded-full border border-sand-300 px-3 py-1 text-xs font-semibold text-sand-700"
+              onClick={() =>
+                setImageDeleteTarget({
+                  tag: "passportSizePhotoUrl",
+                  label: "Passport size photo",
+                })
+              }
+            >
+              Delete image
+            </button>
+          </div>
+        ) : null}
+        {uploadingImageTarget === "tag:passportSizePhotoUrl" ? (
+          <p className="mt-2 text-xs text-sand-500">Uploading image...</p>
+        ) : null}
+      </div>
       {(() => {
         const additionalFields = profileTags.filter(
           (item) => !isBaseProfileKey(item.tag)
@@ -160,59 +248,91 @@ export const ProfilePage = ({
         if (!additionalFields.length) return null;
 
         const orderedFields = [
-          ...additionalFields.filter((item) => item.type !== "image"),
+          ...additionalFields.filter(
+            (item) => item.type !== "image" && item.type !== "map"
+          ),
+          ...additionalFields.filter((item) => item.type === "map"),
           ...additionalFields.filter((item) => item.type === "image"),
         ];
 
         return (
           <div className="space-y-3">
             <p className="text-sm font-semibold text-sand-900">Additional profile fields</p>
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-4">
               {orderedFields.map((item) => {
                 const value = getProfileTagFieldValue(item.tag);
 
                 if (item.type === "image") {
+                  const inputId = `profile-image-${item._id}`;
                   return (
-                    <label
+                    <div
                       key={item._id}
-                      className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center sm:col-span-2"
+                      className="rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center"
                     >
-                      <Image className="mx-auto h-5 w-5 text-sand-700" />
-                      <p className="text-sm font-semibold text-sand-900">{item.label}</p>
-                      <p className="mt-1 text-xs text-sand-500">
-                        {value ? "Update image" : "Browse files"}
-                      </p>
-                      {value || profileImageFileNames[item.tag] ? (
-                        <p className="mt-1 break-all text-xs text-sand-500">
-                          {profileImageFileNames[item.tag] ||
-                            getFileNameFromUrl(value) ||
-                            "Uploaded image"}
+                      <label htmlFor={inputId} className="block w-full cursor-pointer">
+                        <Image className="mx-auto h-5 w-5 text-sand-700" />
+                        <p className="text-sm font-semibold text-sand-900">{item.label}</p>
+                        <p className="mt-1 text-xs text-sand-500">
+                          {value ? "Update image" : "Browse files"}
                         </p>
-                      ) : null}
+                        {value || profileImageFileNames[item.tag] ? (
+                          <p className="mt-1 break-all text-xs text-sand-500">
+                            {profileImageFileNames[item.tag] ||
+                              getFileNameFromUrl(value) ||
+                              "Uploaded image"}
+                          </p>
+                        ) : null}
+                      </label>
                       <input
+                        id={inputId}
                         className="hidden"
                         type="file"
                         accept="image/*"
                         onChange={(event) =>
-                          handleProfileTagImageUpload(item.tag, event.target.files?.[0])
+                          handleProfileTagImageUpload(
+                            item.tag,
+                            event.target.files?.[0],
+                            item.options || []
+                          )
                         }
                       />
                       {value ? (
-                        <img
-                          src={value}
-                          alt={item.label}
-                          className="mx-auto mt-3 h-40 w-full max-w-full rounded-xl object-cover sm:h-44 sm:max-w-md"
-                        />
+                        <a
+                          href={value}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mx-auto mt-3 block w-full max-w-full sm:max-w-md"
+                        >
+                          <img
+                            src={value}
+                            alt={item.label}
+                            className="h-40 w-full rounded-xl object-cover sm:h-44"
+                          />
+                        </a>
                       ) : null}
                       {value ? (
-                        <span className="mt-3 inline-flex rounded-full border border-sand-300 px-3 py-1 text-xs font-semibold text-sand-700">
-                          Change image
-                        </span>
+                        <div className="mt-3 flex items-center justify-center gap-2">
+                          <label
+                            htmlFor={inputId}
+                            className="inline-flex cursor-pointer rounded-full border border-sand-300 px-3 py-1 text-xs font-semibold text-sand-700"
+                          >
+                            Change image
+                          </label>
+                          <button
+                            type="button"
+                            className="inline-flex cursor-pointer rounded-full border border-sand-300 px-3 py-1 text-xs font-semibold text-sand-700"
+                            onClick={() =>
+                              setImageDeleteTarget({ tag: item.tag, label: item.label })
+                            }
+                          >
+                            Delete image
+                          </button>
+                        </div>
                       ) : null}
                       {uploadingImageTarget === `tag:${item.tag}` ? (
                         <p className="mt-2 text-xs text-sand-500">Uploading image...</p>
                       ) : null}
-                    </label>
+                    </div>
                   );
                 }
 
@@ -237,9 +357,78 @@ export const ProfilePage = ({
                   );
                 }
 
+                if (item.type === "combobox") {
+                  return (
+                    <div key={item._id} className="space-y-1">
+                      <p className="text-xs uppercase tracking-[0.2em] text-sand-500">{item.label}</p>
+                      <ComboBox
+                        options={(item.options || []).map((option) => ({
+                          value: option,
+                          label: option,
+                        }))}
+                        value={value}
+                        placeholder={`Search ${item.label}`}
+                        onChange={(nextValue) => setProfileTagFieldValue(item.tag, nextValue)}
+                      />
+                    </div>
+                  );
+                }
+
+                if (item.type === "radio") {
+                  return (
+                    <div key={item._id} className="space-y-2">
+                      <p className="text-xs uppercase tracking-[0.2em] text-sand-500">{item.label}</p>
+                      <div className="space-y-2 rounded-2xl border border-sand-200 bg-sand-50 p-3">
+                        {(item.options || []).map((option) => (
+                          <label key={option} className="flex items-center gap-2 text-sm text-sand-900">
+                            <input
+                              type="radio"
+                              name={`profile-${item.tag}`}
+                              className="h-4 w-4 accent-sand-900"
+                              checked={value === option}
+                              onChange={() => setProfileTagFieldValue(item.tag, option)}
+                            />
+                            <span>{option}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (item.type === "checkbox") {
+                  const selectedValues = new Set(readMultiValue(value));
+                  return (
+                    <div key={item._id} className="space-y-2">
+                      <p className="text-xs uppercase tracking-[0.2em] text-sand-500">{item.label}</p>
+                      <div className="space-y-2 rounded-2xl border border-sand-200 bg-sand-50 p-3">
+                        {(item.options || []).map((option) => (
+                          <label key={option} className="flex items-center gap-2 text-sm text-sand-900">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 accent-sand-900"
+                              checked={selectedValues.has(option)}
+                              onChange={(event) => {
+                                const next = new Set(selectedValues);
+                                if (event.target.checked) {
+                                  next.add(option);
+                                } else {
+                                  next.delete(option);
+                                }
+                                setProfileTagFieldValue(item.tag, Array.from(next).join(", "));
+                              }}
+                            />
+                            <span>{option}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+
                 if (item.type === "map") {
                   return (
-                    <div key={item._id} className="rounded-2xl border border-sand-200 bg-sand-50 p-4 sm:col-span-2">
+                    <div key={item._id} className="rounded-2xl border border-sand-200 bg-sand-50 p-4">
                       <p className="text-xs uppercase tracking-[0.2em] text-sand-500">{item.label}</p>
                       <p className="mt-1 text-sm text-sand-900">
                         {value ? readMapLabel(value) : "No location selected"}
@@ -302,6 +491,32 @@ export const ProfilePage = ({
           setActiveMapField(null);
         }}
       />
+    ) : null}
+    {imageDeleteTarget ? (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+        <div className="w-full max-w-md rounded-3xl border border-sand-200 bg-white p-6 shadow-xl">
+          <div className="space-y-2">
+            <h3 className="text-xl font-semibold text-sand-950">Delete image?</h3>
+            <p className="text-sm text-sand-500">
+              This removes <span className="font-semibold text-sand-900">{imageDeleteTarget.label}</span> from your profile and ImageKit.
+            </p>
+          </div>
+          <div className="mt-6 flex flex-wrap gap-3">
+            <Button
+              variant="secondary"
+              onClick={async () => {
+                await handleProfileTagImageDelete(imageDeleteTarget.tag);
+                setImageDeleteTarget(null);
+              }}
+            >
+              Delete image
+            </Button>
+            <Button variant="ghost" onClick={() => setImageDeleteTarget(null)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </div>
     ) : null}
   </section>
   );

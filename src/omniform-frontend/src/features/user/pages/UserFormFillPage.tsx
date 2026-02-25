@@ -3,7 +3,9 @@ import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../../../components/ui/button";
 import { Card } from "../../../components/ui/card";
+import { ComboBox } from "../../../components/ui/combobox";
 import { Input } from "../../../components/ui/input";
+import { Select } from "../../../components/ui/select";
 import { SectionHeading } from "../../../components/ui/section-heading";
 import { MapPickerModal } from "../../../components/modals/MapPickerModal";
 import type { Form } from "../../../types/app";
@@ -13,9 +15,14 @@ type UserFormFillPageProps = {
   formValues: Record<string, string>;
   setFormValues: Dispatch<SetStateAction<Record<string, string>>>;
   formErrors: Record<string, string>;
+  autofillUncoveredFields: Record<string, boolean>;
   formImageFileNames: Record<string, string>;
   getFileNameFromUrl: (url?: string) => string;
-  handleFormImageUpload: (fieldKey: string, file?: File) => Promise<void>;
+  handleFormImageUpload: (
+    fieldKey: string,
+    file?: File,
+    options?: string[]
+  ) => Promise<void>;
   uploadingImageTarget: string;
   handleAutofill: () => void;
   handleSubmitForm: () => Promise<void>;
@@ -28,6 +35,7 @@ export const UserFormFillPage = ({
   formValues,
   setFormValues,
   formErrors,
+  autofillUncoveredFields,
   formImageFileNames,
   getFileNameFromUrl,
   handleFormImageUpload,
@@ -65,6 +73,14 @@ export const UserFormFillPage = ({
     return value;
   };
 
+  const readMultiValue = (value: string) =>
+    value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+  const hasAutofillGaps = Object.keys(autofillUncoveredFields).length > 0;
+
   return (
   <section className="mx-auto mt-10 max-w-4xl">
     <Card className="space-y-6">
@@ -87,15 +103,29 @@ export const UserFormFillPage = ({
               <Button variant="secondary" onClick={handleAutofill}>
                 Autofill
               </Button>
+              {hasAutofillGaps ? (
+                <p className="text-xs text-sand-500">
+                  Highlighted fields still need manual input.
+                </p>
+              ) : null}
             </div>
           ) : null}
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-4">
             {components.map((field, index) => {
               const fieldKey = field.id || field.tag || `field-${index}`;
               const value = formValues[fieldKey] || "";
               const error = formErrors[fieldKey];
+              const fieldLabel = field.required ? `${field.label} *` : field.label;
+              const shouldHighlight = !showReview && Boolean(autofillUncoveredFields[fieldKey]);
               return (
-                <div key={fieldKey} className="space-y-2">
+                <div
+                  key={fieldKey}
+                  className={`space-y-2 rounded-2xl p-2 transition ${
+                    shouldHighlight
+                      ? "border border-sand-300 bg-sand-50/70"
+                      : "border border-transparent"
+                  }`}
+                >
                   {showReview ? (
                     <div className="rounded-2xl border border-sand-200 bg-sand-50 p-4">
                       <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
@@ -120,11 +150,11 @@ export const UserFormFillPage = ({
                     </div>
                   ) : field.type === "image" ? (
                     <>
+                      <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                        {fieldLabel}
+                      </p>
                       <label className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
                         <Image className="mx-auto h-5 w-5 text-sand-700" />
-                        <p className="text-sm font-semibold text-sand-900">
-                          {field.required ? `${field.label} *` : field.label}
-                        </p>
                         <p className="mt-1 text-xs text-sand-500">
                           {value ? "Update image" : "Browse files"}
                         </p>
@@ -140,7 +170,11 @@ export const UserFormFillPage = ({
                           type="file"
                           accept="image/*"
                           onChange={(event) =>
-                            handleFormImageUpload(fieldKey, event.target.files?.[0])
+                            handleFormImageUpload(
+                              fieldKey,
+                              event.target.files?.[0],
+                              field.options || []
+                            )
                           }
                         />
                         {value ? (
@@ -161,47 +195,154 @@ export const UserFormFillPage = ({
                       ) : null}
                     </>
                   ) : field.type === "map" ? (
-                    <div className="rounded-2xl border border-sand-200 bg-sand-50 p-4">
-                      <p className="text-sm font-semibold text-sand-900">
-                        {field.required ? `${field.label} *` : field.label}
+                    <div className="space-y-2">
+                      <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                        {fieldLabel}
                       </p>
-                      <p className="mt-1 text-xs text-sand-500">
-                        {value ? readMapLabel(value) : "No location selected"}
+                      <div className="rounded-2xl border border-sand-200 bg-sand-50 p-4">
+                        <p className="text-xs text-sand-500">
+                          {value ? readMapLabel(value) : "No location selected"}
+                        </p>
+                        <Button
+                          className="mt-3"
+                          variant="secondary"
+                          onClick={() =>
+                            setActiveMapField({
+                              key: fieldKey,
+                              label: field.label,
+                              currentValue: value,
+                            })
+                          }
+                        >
+                          {value ? "Update location" : "Select location"}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : field.type === "select" ? (
+                    <div className="space-y-2">
+                      <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                        {fieldLabel}
                       </p>
-                      <Button
-                        className="mt-3"
-                        variant="secondary"
-                        onClick={() =>
-                          setActiveMapField({
-                            key: fieldKey,
-                            label: field.label,
-                            currentValue: value,
-                          })
+                      <Select
+                        value={value}
+                        onChange={(event) =>
+                          setFormValues((prev) => ({
+                            ...prev,
+                            [fieldKey]: event.target.value,
+                          }))
                         }
                       >
-                        {value ? "Update location" : "Select location"}
-                      </Button>
+                        <option value="">Select {field.label}</option>
+                        {(field.options || []).map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
+                  ) : field.type === "combobox" ? (
+                    <div className="space-y-2">
+                      <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                        {fieldLabel}
+                      </p>
+                      <ComboBox
+                        options={(field.options || []).map((option) => ({
+                          value: option,
+                          label: option,
+                        }))}
+                        value={value}
+                        placeholder={`Search ${field.label}`}
+                        onChange={(nextValue) =>
+                          setFormValues((prev) => ({
+                            ...prev,
+                            [fieldKey]: nextValue,
+                          }))
+                        }
+                      />
+                    </div>
+                  ) : field.type === "radio" ? (
+                    <div className="space-y-2">
+                      <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                        {fieldLabel}
+                      </p>
+                      <div className="space-y-2 rounded-2xl border border-sand-200 bg-sand-50 p-3">
+                        {(field.options || []).map((option) => (
+                          <label key={option} className="flex items-center gap-2 text-sm text-sand-900">
+                            <input
+                              type="radio"
+                              name={`form-${fieldKey}`}
+                              className="h-4 w-4 accent-sand-900"
+                              checked={value === option}
+                              onChange={() =>
+                                setFormValues((prev) => ({
+                                  ...prev,
+                                  [fieldKey]: option,
+                                }))
+                              }
+                            />
+                            <span>{option}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ) : field.type === "checkbox" ? (
+                    <div className="space-y-2">
+                      <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                        {fieldLabel}
+                      </p>
+                      <div className="space-y-2 rounded-2xl border border-sand-200 bg-sand-50 p-3">
+                        {(field.options || []).map((option) => {
+                          const selectedValues = new Set(readMultiValue(value));
+                          return (
+                            <label key={option} className="flex items-center gap-2 text-sm text-sand-900">
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 accent-sand-900"
+                                checked={selectedValues.has(option)}
+                                onChange={(event) => {
+                                  const next = new Set(selectedValues);
+                                  if (event.target.checked) {
+                                    next.add(option);
+                                  } else {
+                                    next.delete(option);
+                                  }
+                                  setFormValues((prev) => ({
+                                    ...prev,
+                                    [fieldKey]: Array.from(next).join(", "),
+                                  }));
+                                }}
+                              />
+                              <span>{option}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
                     </div>
                   ) : (
-                    <Input
-                      type={
-                        field.type === "number"
-                          ? "number"
-                          : field.type === "date"
-                          ? "date"
-                          : field.type === "email"
-                          ? "email"
-                          : "text"
-                      }
-                      placeholder={field.required ? `${field.label} *` : field.label}
-                      value={value}
-                      onChange={(event) =>
-                        setFormValues((prev) => ({
-                          ...prev,
-                          [fieldKey]: event.target.value,
-                        }))
-                      }
-                    />
+                    <div className="space-y-2">
+                      <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                        {fieldLabel}
+                      </p>
+                      <Input
+                        type={
+                          field.type === "number"
+                            ? "number"
+                            : field.type === "date"
+                            ? "date"
+                            : field.type === "email"
+                            ? "email"
+                            : "text"
+                        }
+                        placeholder={`Enter ${field.label}`}
+                        value={value}
+                        onChange={(event) =>
+                          setFormValues((prev) => ({
+                            ...prev,
+                            [fieldKey]: event.target.value,
+                          }))
+                        }
+                      />
+                    </div>
                   )}
                   {!showReview && error ? <p className="text-sm text-sand-500">{error}</p> : null}
                 </div>
