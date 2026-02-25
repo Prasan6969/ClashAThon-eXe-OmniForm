@@ -424,4 +424,35 @@ router.put(
   }
 );
 
+router.delete(
+  "/orgs/:orgId/forms/:formId",
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const { orgId, formId } = req.params;
+
+      if (!mongoose.Types.ObjectId.isValid(orgId)) {
+        return res.status(400).json({ error: "Invalid organization ID" });
+      }
+
+      if (!mongoose.Types.ObjectId.isValid(formId)) {
+        return res.status(400).json({ error: "Invalid form ID" });
+      }
+
+      const form = await Form.findOneAndDelete({
+        _id: formId,
+        organizationId: orgId,
+      });
+
+      if (!form) {
+        return res.status(404).json({ error: "Form not found" });
+      }
+
+      return res.json({ data: { _id: formId } });
+    } catch (error) {
+      return res.status(500).json({ error: "Failed to delete form" });
+    }
+  }
+);
+
 module.exports = router;

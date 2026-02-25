@@ -15,9 +15,10 @@ const SubmissionSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "completed", "rejected"],
+      enum: ["pending", "completed", "rejected", "canceled"],
       default: "pending",
     },
+    userEmail: { type: String, trim: true },
     data: { type: Object, default: {} },
     reviewNotes: { type: String, trim: true },
     reviewedBy: { type: String, trim: true },

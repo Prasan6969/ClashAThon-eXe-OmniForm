@@ -2,13 +2,14 @@ import type { HTMLAttributes } from "react";
 import { cn } from "../../utils/cn";
 
 type StatusPillProps = HTMLAttributes<HTMLDivElement> & {
-  status: "pending" | "completed" | "rejected";
+  status: "pending" | "completed" | "rejected" | "canceled";
 };
 
 const styles = {
   pending: "bg-amber-50 text-amber-700 border-amber-200",
   completed: "bg-emerald-50 text-emerald-700 border-emerald-200",
   rejected: "bg-rose-50 text-rose-700 border-rose-200",
+  canceled: "bg-sand-100 text-sand-600 border-sand-200",
 };
 
 export const StatusPill = ({ status, className, ...props }: StatusPillProps) => (

@@ -5,16 +5,9 @@ import {
   SignOutButton,
 } from "@clerk/clerk-react";
 import { useEffect, useMemo, useState } from "react";
-import { format } from "date-fns";
 import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
-import { Calendar } from "./components/ui/calendar";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "./components/ui/popover";
 import { Card } from "./components/ui/card";
 import { Input } from "./components/ui/input";
 import { ComboBox } from "./components/ui/combobox";
@@ -61,6 +54,7 @@ type Form = {
   _id: string;
   name: string;
   description?: string;
+  organizationId?: string;
   components?: FormField[];
   fields?: FormField[];
 };
@@ -69,11 +63,20 @@ type Submission = {
   formId:
     | string
     | { _id: string; name: string; fields?: FormField[] };
-  status: "pending" | "completed" | "rejected";
+  status: "pending" | "completed" | "rejected" | "canceled";
   createdAt: string;
   data?: Record<string, string>;
   reviewNotes?: string;
   cooldownUntil?: string;
+};
+type OrgSubmissionSummary = {
+  _id: string;
+  formId: string | { _id: string; name: string };
+  status: "pending" | "completed" | "rejected" | "canceled";
+  createdAt: string;
+};
+type OrgSubmissionDetail = Submission & {
+  formId: string | { _id: string; name: string; fields?: FormField[] };
 };
 type Profile = {
   fullName?: string;
@@ -149,7 +152,9 @@ export default function App() {
   const [selectedManageOrg, setSelectedManageOrg] = useState<Organization | null>(
     null
   );
-  const [orgSubmissions, setOrgSubmissions] = useState<Submission[]>([]);
+  const [orgSubmissions, setOrgSubmissions] = useState<OrgSubmissionSummary[]>(
+    []
+  );
   const [orgForms, setOrgForms] = useState<Form[]>([]);
   const [orgStatusFilter, setOrgStatusFilter] = useState("pending");
   const [orgFormFilter, setOrgFormFilter] = useState("");
@@ -158,6 +163,11 @@ export default function App() {
   );
   const [orgDashboardMessage, setOrgDashboardMessage] = useState("");
   const [orgMembership, setOrgMembership] = useState<Organization | null>(null);
+  const [selectedOrgSubmission, setSelectedOrgSubmission] =
+    useState<OrgSubmissionDetail | null>(null);
+  const [orgSubmissionPage, setOrgSubmissionPage] = useState(1);
+  const [orgSubmissionTotalPages, setOrgSubmissionTotalPages] = useState(1);
+  const [orgSubmissionEmailQuery, setOrgSubmissionEmailQuery] = useState("");
 
   const [orgQuery, setOrgQuery] = useState("");
   const [orgResults, setOrgResults] = useState<Organization[]>([]);
@@ -415,9 +425,15 @@ export default function App() {
         decision === "accept" ? "Submission accepted." : "Submission rejected."
       );
       const refreshed = await authedFetch(
-        `/api/submissions/org?status=${orgStatusFilter}&formId=${orgFormFilter}`
+        `/api/submissions/org?status=${orgStatusFilter}&formId=${orgFormFilter}&page=${orgSubmissionPage}&limit=20&email=${encodeURIComponent(
+          orgSubmissionEmailQuery
+        )}`
       );
       setOrgSubmissions(refreshed.data || []);
+      setOrgSubmissionTotalPages(refreshed.totalPages || 1);
+      if (selectedOrgSubmission?._id === submissionId) {
+        await fetchOrgSubmissionDetail(submissionId);
+      }
     } catch (error) {
       setOrgDashboardMessage(
         error instanceof Error ? error.message : "Update failed."
@@ -425,18 +441,45 @@ export default function App() {
     }
   };
 
-  const loadOrgSubmissions = async (formIdOverride?: string) => {
+  const loadOrgSubmissions = async (
+    formIdOverride?: string,
+    statusOverride?: string,
+    pageOverride?: number,
+    emailOverride?: string
+  ) => {
     try {
       setOrgDashboardMessage("");
+      const nextStatus = statusOverride ?? orgStatusFilter;
+      const nextPage = pageOverride ?? orgSubmissionPage;
+      const nextEmail =
+        emailOverride !== undefined ? emailOverride : orgSubmissionEmailQuery;
+      const nextFormId =
+        formIdOverride !== undefined ? formIdOverride : orgFormFilter;
       const payload = await authedFetch(
-        `/api/submissions/org?status=${orgStatusFilter}&formId=${
-          formIdOverride ?? orgFormFilter
-        }`
+        `/api/submissions/org?status=${nextStatus}&formId=${nextFormId}&page=${nextPage}&limit=20&email=${encodeURIComponent(
+          nextEmail
+        )}`
       );
       setOrgSubmissions(payload.data || []);
+      setOrgSubmissionTotalPages(payload.totalPages || 1);
     } catch (error) {
       setOrgDashboardMessage(
         error instanceof Error ? error.message : "Update failed."
+      );
+    }
+  };
+
+  const fetchOrgSubmissionDetail = async (submissionId: string) => {
+    try {
+      setOrgDashboardMessage("");
+      const payload = await authedFetch(`/api/submissions/org/${submissionId}`);
+      setSelectedOrgSubmission(payload.data || null);
+      if (!payload.data) {
+        setOrgDashboardMessage("Submission not found.");
+      }
+    } catch (error) {
+      setOrgDashboardMessage(
+        error instanceof Error ? error.message : "Failed to load submission."
       );
     }
   };
@@ -618,6 +661,26 @@ export default function App() {
     }
   };
 
+  const handleDeleteManageForm = async (form: Form) => {
+    if (!selectedManageOrg) return;
+    try {
+      setFormMessage("");
+      const confirmed = window.confirm(
+        `Delete "${form.name}"? This cannot be undone.`
+      );
+      if (!confirmed) return;
+      await adminFetch(`/api/admin/orgs/${selectedManageOrg._id}/forms/${form._id}`, {
+        method: "DELETE",
+      });
+      setManageForms((prev) => prev.filter((item) => item._id !== form._id));
+      setFormMessage("Form deleted.");
+    } catch (error) {
+      setFormMessage(
+        error instanceof Error ? error.message : "Failed to delete form."
+      );
+    }
+  };
+
   useEffect(() => {
     if (!isLoaded || !user || role !== "admin" || !selectedManageOrg) return;
     const timer = setTimeout(async () => {
@@ -642,20 +705,23 @@ export default function App() {
   const buildAutofillPayload = (form: Form) => {
     const data: Record<string, string> = {};
     const components = form.components || form.fields || [];
-    components.forEach((field) => {
-      const key = field.tag || field.id;
-      const value = (profileDraft as Record<string, string | undefined>)[key];
-      data[key] = value || "";
+    components.forEach((field, index) => {
+      const fieldKey = field.id || field.tag || `field-${index}`;
+      const tagKey = field.tag || field.id;
+      const value = tagKey
+        ? (profileDraft as Record<string, string | undefined>)[tagKey]
+        : "";
+      data[fieldKey] = value || "";
     });
     return data;
   };
 
-  const openForm = (form: Form) => {
+  const openForm = async (form: Form) => {
     const submission = submissions.find((item) => {
       if (typeof item.formId === "string") return item.formId === form._id;
       return item.formId?._id === form._id;
     });
-    if (submission?.cooldownUntil) {
+    if (submission?.cooldownUntil && submission.status === "completed") {
       const cooldownDate = new Date(submission.cooldownUntil);
       const now = new Date();
       if (cooldownDate > now) {
@@ -670,20 +736,33 @@ export default function App() {
         return;
       }
     }
-    setActiveForm(form);
-    const components = form.components || form.fields || [];
-    const initialValues = components.reduce<Record<string, string>>(
-      (acc, field) => {
-        const key = field.tag || field.id;
-        acc[key] = "";
-        return acc;
-      },
-      {}
-    );
-    setFormValues(initialValues);
-    setFormErrors({});
-    setSubmitMessage("");
-    navigate(`/forms/${form._id}`);
+    try {
+      setFormLoading(true);
+      const payload = await authedFetch(
+        `/api/orgs/${selectedOrg?._id || form.organizationId}/forms/${form._id}`
+      );
+      const fullForm = payload.data || form;
+      setActiveForm(fullForm);
+      const components = fullForm.components || fullForm.fields || [];
+      const initialValues = components.reduce<Record<string, string>>(
+        (acc, field, index) => {
+          const fieldKey = field.id || field.tag || `field-${index}`;
+          acc[fieldKey] = "";
+          return acc;
+        },
+        {}
+      );
+      setFormValues(initialValues);
+      setFormErrors({});
+      setSubmitMessage("");
+      navigate(`/forms/${form._id}`);
+    } catch (error) {
+      setSubmitMessage(
+        error instanceof Error ? error.message : "Failed to load form."
+      );
+    } finally {
+      setFormLoading(false);
+    }
   };
 
   const handleAutofill = () => {
@@ -700,10 +779,10 @@ export default function App() {
       const components = activeForm.components || activeForm.fields || [];
       const missingRequired = components
         .filter((field) => field.required)
-        .reduce<Record<string, string>>((acc, field) => {
-          const key = field.tag || field.id;
-          if (!formValues[key]) {
-            acc[key] = `${field.label} is required`;
+        .reduce<Record<string, string>>((acc, field, index) => {
+          const fieldKey = field.id || field.tag || `field-${index}`;
+          if (!formValues[fieldKey]) {
+            acc[fieldKey] = `${field.label} is required`;
           }
           return acc;
         }, {});
@@ -713,7 +792,12 @@ export default function App() {
         setSubmitMessage("Please complete required fields.");
         return;
       }
-      const data = formValues;
+      const data = components.reduce<Record<string, string>>((acc, field, index) => {
+        const fieldKey = field.id || field.tag || `field-${index}`;
+        const dataKey = field.tag || field.id || fieldKey;
+        acc[dataKey] = formValues[fieldKey] || "";
+        return acc;
+      }, {});
       await authedFetch("/api/submissions", {
         method: "POST",
         body: JSON.stringify({
@@ -741,12 +825,45 @@ export default function App() {
         setShowSavePrompt(true);
       } else {
         setActiveForm(null);
+        navigate("/");
       }
       const payload = await authedFetch("/api/submissions/me");
       setSubmissions(payload.data || []);
     } catch (error) {
       setSubmitMessage(
         error instanceof Error ? error.message : "Submission failed."
+      );
+    }
+  };
+
+  const handleCancelSubmission = async (submissionId: string) => {
+    try {
+      setSubmitMessage("");
+      await authedFetch(`/api/submissions/${submissionId}/cancel`, {
+        method: "POST",
+      });
+      const payload = await authedFetch("/api/submissions/me");
+      setSubmissions(payload.data || []);
+    } catch (error) {
+      setSubmitMessage(
+        error instanceof Error ? error.message : "Failed to cancel submission."
+      );
+    }
+  };
+
+  const handleClearCanceledSubmissions = async () => {
+    try {
+      setSubmitMessage("");
+      await authedFetch("/api/submissions/clear-canceled", {
+        method: "POST",
+      });
+      const payload = await authedFetch("/api/submissions/me");
+      setSubmissions(payload.data || []);
+    } catch (error) {
+      setSubmitMessage(
+        error instanceof Error
+          ? error.message
+          : "Failed to clear canceled submissions."
       );
     }
   };
@@ -825,7 +942,7 @@ export default function App() {
       }
     } else if (activeRole === "organization") {
       setView("org");
-      if (location.pathname !== "/org") {
+      if (!location.pathname.startsWith("/org")) {
         navigate("/org", { replace: true });
       }
     } else {
@@ -1008,16 +1125,38 @@ export default function App() {
 
       try {
         const submissionPayload = await authedFetch(
-          `/api/submissions/org?status=${orgStatusFilter}&formId=${orgFormFilter}`
+          `/api/submissions/org?status=${orgStatusFilter}&formId=${orgFormFilter}&page=${orgSubmissionPage}&limit=20&email=${encodeURIComponent(
+            orgSubmissionEmailQuery
+          )}`
         );
         setOrgSubmissions(submissionPayload.data || []);
+        setOrgSubmissionTotalPages(submissionPayload.totalPages || 1);
       } catch (error) {
         setOrgSubmissions([]);
       }
     };
 
     loadOrgData();
-  }, [isLoaded, user, role, orgStatusFilter, orgFormFilter, resolvedOrganizationId]);
+  }, [
+    isLoaded,
+    user,
+    role,
+    orgStatusFilter,
+    orgFormFilter,
+    orgSubmissionPage,
+    orgSubmissionEmailQuery,
+    resolvedOrganizationId,
+  ]);
+
+  useEffect(() => {
+    if (!isLoaded || !user || role !== "organization") return;
+    const currentId = location.pathname.startsWith("/org/submissions/")
+      ? location.pathname.split("/org/submissions/")[1]
+      : "";
+    if (!currentId) return;
+    if (selectedOrgSubmission?._id === currentId) return;
+    fetchOrgSubmissionDetail(currentId);
+  }, [isLoaded, user, role, location.pathname, selectedOrgSubmission]);
 
   return (
     <div className="min-h-screen">
@@ -1189,7 +1328,14 @@ export default function App() {
                         </Button>
                       </div>
                       <div className="space-y-3">
-                        {forms.map((form) => (
+                        {forms
+                          .filter(
+                            (form) =>
+                              !selectedOrg ||
+                              !form.organizationId ||
+                              form.organizationId === selectedOrg._id
+                          )
+                          .map((form) => (
                           <div
                             key={form._id}
                             className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sand-200 bg-white p-4"
@@ -1222,42 +1368,70 @@ export default function App() {
                           title="Submission status"
                           subtitle="Track every form after submission."
                         />
-                        <div className="space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-sm text-sand-500">
+                            {submissions.length} submissions
+                          </p>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={handleClearCanceledSubmissions}
+                            disabled={!submissions.some((item) => item.status === "canceled")}
+                          >
+                            Clear canceled
+                          </Button>
+                        </div>
+                        <div className="max-h-[420px] space-y-4 overflow-y-auto pr-1">
                           {submissions.map((submission) => (
                             <div
                               key={submission._id}
-                              className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sand-200 bg-white p-4"
+                              className="rounded-2xl border border-sand-200 bg-white p-4"
                             >
-                              <div>
-                                <p className="font-semibold text-sand-950">
-                                  {typeof submission.formId === "string"
-                                    ? `Form ${submission.formId}`
-                                    : submission.formId.name}
-                                </p>
-                                <p className="text-sm text-sand-500">
-                                  {new Date(submission.createdAt).toLocaleString()}
-                                </p>
-                                {submission.reviewNotes ? (
-                                  <p className="text-sm text-sand-500">
-                                    Notes: {submission.reviewNotes}
+                              <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div>
+                                  <p className="font-semibold text-sand-950">
+                                    {typeof submission.formId === "string"
+                                      ? `Form ${submission.formId}`
+                                      : submission.formId.name}
                                   </p>
-                                ) : null}
-                                {submission.cooldownUntil ? (
                                   <p className="text-sm text-sand-500">
-                                    Cooldown until: {new Date(
-                                      submission.cooldownUntil
-                                    ).toLocaleDateString()}
+                                    {new Date(submission.createdAt).toLocaleString()}
                                   </p>
-                                ) : null}
+                                  {submission.reviewNotes ? (
+                                    <p className="text-sm text-sand-500">
+                                      Notes: {submission.reviewNotes}
+                                    </p>
+                                  ) : null}
+                                  {submission.cooldownUntil ? (
+                                    <p className="text-sm text-sand-500">
+                                      Cooldown until: {new Date(
+                                        submission.cooldownUntil
+                                      ).toLocaleDateString()}
+                                    </p>
+                                  ) : null}
+                                </div>
+                                <StatusPill
+                                  status={
+                                    submission.status as
+                                      | "pending"
+                                      | "completed"
+                                      | "rejected"
+                                  }
+                                />
                               </div>
-                              <StatusPill
-                                status={
-                                  submission.status as
-                                    | "pending"
-                                    | "completed"
-                                    | "rejected"
-                                }
-                              />
+                              {submission.status === "pending" ? (
+                                <div className="mt-3">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() =>
+                                      handleCancelSubmission(submission._id)
+                                    }
+                                  >
+                                    Cancel submission
+                                  </Button>
+                                </div>
+                              ) : null}
                             </div>
                           ))}
                           {!submissions.length ? (
@@ -1594,11 +1768,12 @@ export default function App() {
                           <div className="grid gap-4 sm:grid-cols-2">
                             {(activeForm.components || activeForm.fields || []).map(
                               (field) => {
-                                const key = field.tag || field.id;
-                                const value = formValues[key] || "";
-                                const error = formErrors[key];
+                                const fieldKey =
+                                  field.id || field.tag || `field-${index}`;
+                                const value = formValues[fieldKey] || "";
+                                const error = formErrors[fieldKey];
                                 return (
-                                  <div key={key} className="space-y-2">
+                                  <div key={fieldKey} className="space-y-2">
                                     <Input
                                       placeholder={
                                         field.required
@@ -1609,7 +1784,7 @@ export default function App() {
                                       onChange={(event) =>
                                         setFormValues((prev) => ({
                                           ...prev,
-                                          [key]: event.target.value,
+                                          [fieldKey]: event.target.value,
                                         }))
                                       }
                                     />
@@ -1676,70 +1851,20 @@ export default function App() {
                             Subscription period
                           </p>
                           <div className="grid gap-3 sm:grid-cols-2">
-                            <Popover>
-                              <PopoverTrigger asChild>
-                                <Button
-                                  type="button"
-                                  variant="secondary"
-                                  className="justify-between"
-                                >
-                                  {orgCreateSubscriptionStartsAt
-                                    ? format(
-                                        new Date(orgCreateSubscriptionStartsAt),
-                                        "PPP"
-                                      )
-                                    : "Start date"}
-                                </Button>
-                              </PopoverTrigger>
-                              <PopoverContent className="w-auto p-0" align="start">
-                                <Calendar
-                                  mode="single"
-                                  selected={
-                                    orgCreateSubscriptionStartsAt
-                                      ? new Date(orgCreateSubscriptionStartsAt)
-                                      : undefined
-                                  }
-                                  onSelect={(date) =>
-                                    setOrgCreateSubscriptionStartsAt(
-                                      date ? date.toISOString().slice(0, 10) : ""
-                                    )
-                                  }
-                                  initialFocus
-                                />
-                              </PopoverContent>
-                            </Popover>
-                            <Popover>
-                              <PopoverTrigger asChild>
-                                <Button
-                                  type="button"
-                                  variant="secondary"
-                                  className="justify-between"
-                                >
-                                  {orgCreateSubscriptionEndsAt
-                                    ? format(
-                                        new Date(orgCreateSubscriptionEndsAt),
-                                        "PPP"
-                                      )
-                                    : "End date"}
-                                </Button>
-                              </PopoverTrigger>
-                              <PopoverContent className="w-auto p-0" align="start">
-                                <Calendar
-                                  mode="single"
-                                  selected={
-                                    orgCreateSubscriptionEndsAt
-                                      ? new Date(orgCreateSubscriptionEndsAt)
-                                      : undefined
-                                  }
-                                  onSelect={(date) =>
-                                    setOrgCreateSubscriptionEndsAt(
-                                      date ? date.toISOString().slice(0, 10) : ""
-                                    )
-                                  }
-                                  initialFocus
-                                />
-                              </PopoverContent>
-                            </Popover>
+                            <Input
+                              type="date"
+                              value={orgCreateSubscriptionStartsAt}
+                              onChange={(event) =>
+                                setOrgCreateSubscriptionStartsAt(event.target.value)
+                              }
+                            />
+                            <Input
+                              type="date"
+                              value={orgCreateSubscriptionEndsAt}
+                              onChange={(event) =>
+                                setOrgCreateSubscriptionEndsAt(event.target.value)
+                              }
+                            />
                           </div>
                         </div>
                         <Button onClick={handleCreateOrg}>
@@ -2008,77 +2133,29 @@ export default function App() {
                               <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
                                 Start date
                               </p>
-                              <Popover>
-                                <PopoverTrigger asChild>
-                                  <Button
-                                    type="button"
-                                    variant="secondary"
-                                    className="justify-between"
-                                  >
-                                    {orgSettingsSubscriptionStartsAt
-                                      ? format(
-                                          new Date(orgSettingsSubscriptionStartsAt),
-                                          "PPP"
-                                        )
-                                      : "Select start date"}
-                                  </Button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-auto p-0" align="start">
-                                  <Calendar
-                                    mode="single"
-                                    selected={
-                                      orgSettingsSubscriptionStartsAt
-                                        ? new Date(
-                                            orgSettingsSubscriptionStartsAt
-                                          )
-                                        : undefined
-                                    }
-                                    onSelect={(date) =>
-                                      setOrgSettingsSubscriptionStartsAt(
-                                        date ? date.toISOString().slice(0, 10) : ""
-                                      )
-                                    }
-                                    initialFocus
-                                  />
-                                </PopoverContent>
-                              </Popover>
+                              <Input
+                                type="date"
+                                value={orgSettingsSubscriptionStartsAt}
+                                onChange={(event) =>
+                                  setOrgSettingsSubscriptionStartsAt(
+                                    event.target.value
+                                  )
+                                }
+                              />
                             </div>
                             <div className="space-y-2">
                               <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
                                 End date
                               </p>
-                              <Popover>
-                                <PopoverTrigger asChild>
-                                  <Button
-                                    type="button"
-                                    variant="secondary"
-                                    className="justify-between"
-                                  >
-                                    {orgSettingsSubscriptionEndsAt
-                                      ? format(
-                                          new Date(orgSettingsSubscriptionEndsAt),
-                                          "PPP"
-                                        )
-                                      : "Select end date"}
-                                  </Button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-auto p-0" align="start">
-                                  <Calendar
-                                    mode="single"
-                                    selected={
-                                      orgSettingsSubscriptionEndsAt
-                                        ? new Date(orgSettingsSubscriptionEndsAt)
-                                        : undefined
-                                    }
-                                    onSelect={(date) =>
-                                      setOrgSettingsSubscriptionEndsAt(
-                                        date ? date.toISOString().slice(0, 10) : ""
-                                      )
-                                    }
-                                    initialFocus
-                                  />
-                                </PopoverContent>
-                              </Popover>
+                              <Input
+                                type="date"
+                                value={orgSettingsSubscriptionEndsAt}
+                                onChange={(event) =>
+                                  setOrgSettingsSubscriptionEndsAt(
+                                    event.target.value
+                                  )
+                                }
+                              />
                             </div>
                           </div>
                         </div>
@@ -2582,24 +2659,32 @@ export default function App() {
                         onChange={(event) => setManageFormQuery(event.target.value)}
                       />
                       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                        {filteredManageForms.map((form) => (
-                          <Card key={form._id} className="space-y-3">
-                            <div className="space-y-1">
-                              <p className="text-lg font-semibold text-sand-950">
-                                {form.name}
-                              </p>
-                              <p className="text-sm text-sand-500">
-                                {form.description || "No description"}
-                              </p>
-                            </div>
-                            <Button
-                              variant="secondary"
-                              onClick={() => handleEditManageForm(form)}
-                            >
-                              Edit form
-                            </Button>
-                          </Card>
-                        ))}
+                {filteredManageForms.map((form) => (
+                  <Card key={form._id} className="space-y-3">
+                    <div className="space-y-1">
+                      <p className="text-lg font-semibold text-sand-950">
+                        {form.name}
+                      </p>
+                      <p className="text-sm text-sand-500">
+                        {form.description || "No description"}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="secondary"
+                        onClick={() => handleEditManageForm(form)}
+                      >
+                        Edit form
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        onClick={() => handleDeleteManageForm(form)}
+                      >
+                        Delete form
+                      </Button>
+                    </div>
+                  </Card>
+                ))}
                         {manageFormsLoading ? (
                           <p className="text-sm text-sand-500">Loading forms...</p>
                         ) : null}
@@ -2638,6 +2723,14 @@ export default function App() {
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
                             <p className="text-sm font-semibold text-sand-950">
+                              {orgMembership?.name || "Organization"}
+                            </p>
+                            {user?.primaryEmailAddress?.emailAddress ? (
+                              <p className="text-sm text-sand-500">
+                                {user.primaryEmailAddress.emailAddress}
+                              </p>
+                            ) : null}
+                            <p className="text-sm font-semibold text-sand-950">
                               Membership status
                             </p>
                             <p className="text-sm text-sand-500">
@@ -2663,7 +2756,7 @@ export default function App() {
                         Your organization ID is pulled from Clerk metadata. Use
                         filters to focus on a specific form.
                       </p>
-                      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
+                      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
                         <Select
                           value={orgFormFilter}
                           onChange={(event) => setOrgFormFilter(event.target.value)}
@@ -2675,6 +2768,14 @@ export default function App() {
                             </option>
                           ))}
                         </Select>
+                        <Input
+                          placeholder="Search by user email"
+                          value={orgSubmissionEmailQuery}
+                          onChange={(event) => {
+                            setOrgSubmissionEmailQuery(event.target.value);
+                            setOrgSubmissionPage(1);
+                          }}
+                        />
                         <Select
                           value={orgStatusFilter}
                           onChange={(event) => setOrgStatusFilter(event.target.value)}
@@ -2686,9 +2787,15 @@ export default function App() {
                         </Select>
                         <Button
                           variant="secondary"
-                          onClick={() => loadOrgSubmissions(orgFormFilter)}
+                          onClick={() => {
+                            setOrgFormFilter("");
+                            setOrgStatusFilter("all");
+                            setOrgSubmissionEmailQuery("");
+                            setOrgSubmissionPage(1);
+                            loadOrgSubmissions("", "all", 1, "");
+                          }}
                         >
-                          Refresh
+                          Reset
                         </Button>
                       </div>
                       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2698,6 +2805,33 @@ export default function App() {
                             ? ` · ${orgStatusFilter}`
                             : ""}
                         </p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              setOrgSubmissionPage((prev) => Math.max(prev - 1, 1))
+                            }
+                            disabled={orgSubmissionPage <= 1}
+                          >
+                            Prev
+                          </Button>
+                          <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                            Page {orgSubmissionPage} of {orgSubmissionTotalPages}
+                          </p>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              setOrgSubmissionPage((prev) =>
+                                Math.min(prev + 1, orgSubmissionTotalPages)
+                              )
+                            }
+                            disabled={orgSubmissionPage >= orgSubmissionTotalPages}
+                          >
+                            Next
+                          </Button>
+                        </div>
                       </div>
                       <div className="space-y-4">
                         {orgSubmissions.map((submission) => (
@@ -2710,7 +2844,7 @@ export default function App() {
                                 <p className="text-lg font-semibold text-sand-950">
                                   {typeof submission.formId === "string"
                                     ? "Form"
-                                    : submission.formId.name}
+                                    : submission.formId?.name || "Form"}
                                 </p>
                                 <p className="text-sm text-sand-500">
                                   Submitted {new Date(submission.createdAt).toLocaleString()}
@@ -2718,36 +2852,16 @@ export default function App() {
                               </div>
                               <StatusPill status={submission.status} />
                             </div>
-                             {submission.status === "pending" ? (
-                               <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto_auto]">
-                                 <Input
-                                   placeholder="Add review notes"
-                                   value={orgReviewNotes[submission._id] || ""}
-                                   onChange={(event) =>
-                                     setOrgReviewNotes((prev) => ({
-                                       ...prev,
-                                       [submission._id]: event.target.value,
-                                     }))
-                                   }
-                                 />
-                                 <Button
-                                   variant="secondary"
-                                   onClick={() =>
-                                     handleOrgDecision(submission._id, "accept")
-                                   }
-                                 >
-                                   Accept
-                                 </Button>
-                                 <Button
-                                   variant="ghost"
-                                   onClick={() =>
-                                     handleOrgDecision(submission._id, "reject")
-                                   }
-                                 >
-                                   Reject
-                                 </Button>
-                               </div>
-                             ) : null}
+                            <div className="mt-4 flex flex-wrap items-center gap-2">
+                              <Button
+                                variant="secondary"
+                                onClick={() =>
+                                  navigate(`/org/submissions/${submission._id}`)
+                                }
+                              >
+                                View
+                              </Button>
+                            </div>
                           </div>
                         ))}
                         {!orgSubmissions.length ? (
@@ -2761,6 +2875,121 @@ export default function App() {
                           {orgDashboardMessage}
                         </p>
                       ) : null}
+                    </Card>
+                  </section>
+                ) : null
+              }
+            />
+            <Route
+              path="/org/submissions/:submissionId"
+              element={
+                role === "organization" ? (
+                  <section className="mx-auto mt-10 max-w-5xl">
+                    <Card className="space-y-6">
+                      <div className="flex flex-wrap items-center justify-between gap-4">
+                        <SectionHeading
+                          title={
+                            selectedOrgSubmission
+                              ? typeof selectedOrgSubmission.formId === "string"
+                                ? "Submission review"
+                                : selectedOrgSubmission.formId.name
+                              : "Submission review"
+                          }
+                          subtitle="Review form data and finalize a decision."
+                        />
+                        <Button
+                          variant="ghost"
+                          onClick={() => navigate("/org")}
+                        >
+                          Back to submissions
+                        </Button>
+                      </div>
+                      {selectedOrgSubmission ? (
+                        <div className="space-y-6">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <StatusPill status={selectedOrgSubmission.status} />
+                            <p className="text-sm text-sand-500">
+                              Submitted{
+                              " " +
+                                new Date(
+                                  selectedOrgSubmission.createdAt
+                                ).toLocaleString()}
+                            </p>
+                          </div>
+                          {selectedOrgSubmission.data ? (
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              {Object.entries(selectedOrgSubmission.data).map(
+                                ([key, value]) => (
+                                  <div
+                                    key={key}
+                                    className="rounded-2xl border border-sand-200 bg-white p-3"
+                                  >
+                                    <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                                      {key}
+                                    </p>
+                                    <p className="mt-1 text-sm text-sand-950">
+                                      {value || "—"}
+                                    </p>
+                                  </div>
+                                )
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-sand-500">
+                              No data submitted.
+                            </p>
+                          )}
+                          {orgDashboardMessage ? (
+                            <p className="text-sm text-sand-500">
+                              {orgDashboardMessage}
+                            </p>
+                          ) : null}
+                          {selectedOrgSubmission.status === "pending" ? (
+                            <div className="space-y-3">
+                              <Input
+                                placeholder="Add review notes"
+                                value={
+                                  orgReviewNotes[selectedOrgSubmission._id] || ""
+                                }
+                                onChange={(event) =>
+                                  setOrgReviewNotes((prev) => ({
+                                    ...prev,
+                                    [selectedOrgSubmission._id]: event.target.value,
+                                  }))
+                                }
+                              />
+                              <div className="flex flex-wrap gap-3">
+                                <Button
+                                  variant="secondary"
+                                  onClick={() =>
+                                    handleOrgDecision(
+                                      selectedOrgSubmission._id,
+                                      "accept"
+                                    )
+                                  }
+                                >
+                                  Accept
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  onClick={() =>
+                                    handleOrgDecision(
+                                      selectedOrgSubmission._id,
+                                      "reject"
+                                    )
+                                  }
+                                >
+                                  Reject
+                                </Button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-sand-500">
+                          {orgDashboardMessage || "Select a submission to review."}
+                        </p>
+                      )}
                     </Card>
                   </section>
                 ) : null

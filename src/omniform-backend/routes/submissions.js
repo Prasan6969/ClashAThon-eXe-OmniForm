@@ -1,4 +1,5 @@
 const express = require("express");
+const { clerkClient } = require("@clerk/express");
 const Submission = require("../models/Submission");
 const Form = require("../models/Form");
 const { requireRole } = require("../middleware/auth");
@@ -41,10 +42,22 @@ router.post("/", requireRole("user"), async (req, res) => {
 
     const submission = await Submission.create({
       userId: req.auth.userId,
+      userEmail: req.auth?.sessionClaims?.email || undefined,
       organizationId,
       formId,
       data: data || {},
     });
+
+    if (!submission.userEmail) {
+      try {
+        const user = await clerkClient.users.getUser(req.auth.userId);
+        submission.userEmail =
+          user.primaryEmailAddress?.emailAddress || submission.userEmail;
+        await submission.save();
+      } catch (error) {
+        // ignore email lookup failures
+      }
+    }
 
     return res.status(201).json({ data: submission });
   } catch (error) {
@@ -65,10 +78,49 @@ router.get("/me", requireRole("user"), async (req, res) => {
   }
 });
 
+router.post("/:id/cancel", requireRole("user"), async (req, res) => {
+  try {
+    const submission = await Submission.findById(req.params.id);
+    if (!submission) {
+      return res.status(404).json({ error: "Submission not found" });
+    }
+
+    if (String(submission.userId) !== String(req.auth.userId)) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    if (submission.status !== "pending") {
+      return res.status(400).json({ error: "Submission not pending" });
+    }
+
+    submission.status = "canceled";
+    submission.cooldownUntil = null;
+    await submission.save();
+
+    return res.json({ data: submission });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to cancel submission" });
+  }
+});
+
+router.post("/clear-canceled", requireRole("user"), async (req, res) => {
+  try {
+    await Submission.deleteMany({
+      userId: req.auth.userId,
+      status: "canceled",
+    });
+    return res.json({ data: { cleared: true } });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to clear canceled submissions" });
+  }
+});
+
 router.get("/org", requireRole("organization"), async (req, res) => {
   try {
-    const { formId, status } = req.query;
+    const { formId, status, email, page, limit } = req.query;
     const filter = { organizationId: req.auth.organizationId };
+    const pageNumber = Math.max(Number(page) || 1, 1);
+    const pageSize = Math.min(Math.max(Number(limit) || 20, 1), 100);
 
     if (formId) {
       filter.formId = formId;
@@ -78,14 +130,50 @@ router.get("/org", requireRole("organization"), async (req, res) => {
       filter.status = status;
     }
 
-    const submissions = await Submission.find(filter)
-      .populate("formId", "name fields")
-      .sort({ createdAt: -1 })
-      .limit(200);
+    if (email) {
+      const escaped = String(email).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(escaped, "i");
+      filter.$or = [
+        { userEmail: { $regex: regex } },
+        { "data.workEmail": { $regex: regex } },
+        { "data.personalEmail": { $regex: regex } },
+      ];
+    }
 
-    return res.json({ data: submissions });
+    const total = await Submission.countDocuments(filter);
+    const submissions = await Submission.find(filter)
+      .populate("formId", "name")
+      .sort({ createdAt: -1 })
+      .skip((pageNumber - 1) * pageSize)
+      .limit(pageSize);
+
+    return res.json({
+      data: submissions,
+      page: pageNumber,
+      limit: pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize),
+    });
   } catch (error) {
     return res.status(500).json({ error: "Failed to fetch submissions" });
+  }
+});
+
+router.get("/org/:id", requireRole("organization"), async (req, res) => {
+  try {
+    const submission = await Submission.findById(req.params.id).populate(
+      "formId",
+      "name fields"
+    );
+    if (!submission) {
+      return res.status(404).json({ error: "Submission not found" });
+    }
+    if (String(submission.organizationId) !== String(req.auth.organizationId)) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    return res.json({ data: submission });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to fetch submission" });
   }
 });
 

@@ -5,6 +5,14 @@ const { requireRole } = require("../middleware/auth");
 
 const router = express.Router();
 
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const buildFuzzyPattern = (value) =>
+  value
+    .split("")
+    .map((char) => escapeRegex(char))
+    .join(".*");
+
 router.get("/", requireRole(["admin", "user", "organization"]), async (req, res) => {
   try {
     const now = new Date();
@@ -16,7 +24,19 @@ router.get("/", requireRole(["admin", "user", "organization"]), async (req, res)
       { $set: { subscriptionStatus: "expired" } }
     );
     const query = req.query.query ? req.query.query.trim() : "";
-    const filter = query ? { $text: { $search: query } } : {};
+    const filter = {};
+    if (query) {
+      const terms = query.split(/\s+/).filter(Boolean);
+      filter.$and = terms.map((term) => {
+        const pattern = buildFuzzyPattern(term);
+        return {
+          $or: [
+            { name: { $regex: pattern, $options: "i" } },
+            { slug: { $regex: pattern, $options: "i" } },
+          ],
+        };
+      });
+    }
     const role = req.auth?.role;
 
     if (role !== "admin") {
@@ -77,13 +97,59 @@ router.get(
       }
 
       const forms = await Form.find(filter)
-        .select("name description status fields")
+        .select("name description status fields components organizationId")
         .sort({ name: 1 })
         .limit(50);
 
       return res.json({ data: forms });
     } catch (error) {
       return res.status(500).json({ error: "Failed to fetch forms" });
+    }
+  }
+);
+
+router.get(
+  "/:orgId/forms/:formId",
+  requireRole(["admin", "user", "organization"]),
+  async (req, res) => {
+    try {
+      const { orgId, formId } = req.params;
+      const role = req.auth?.role;
+
+      if (role === "user") {
+        const org = await Organization.findById(orgId).select(
+          "subscriptionStatus status subscriptionEndsAt"
+        );
+        if (
+          !org ||
+          org.status !== "active" ||
+          org.subscriptionStatus !== "active" ||
+          (org.subscriptionEndsAt && org.subscriptionEndsAt < new Date())
+        ) {
+          return res.status(404).json({ error: "Form not found" });
+        }
+      }
+
+      const filter = {
+        _id: formId,
+        organizationId: orgId,
+      };
+
+      if (role !== "admin") {
+        filter.status = "active";
+      }
+
+      const form = await Form.findOne(filter).select(
+        "name description status fields components organizationId"
+      );
+
+      if (!form) {
+        return res.status(404).json({ error: "Form not found" });
+      }
+
+      return res.json({ data: form });
+    } catch (error) {
+      return res.status(500).json({ error: "Failed to fetch form" });
     }
   }
 );
