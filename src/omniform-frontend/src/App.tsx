@@ -955,7 +955,18 @@ export default function App() {
     };
 
     load();
-  }, [isLoaded, user, role]);
+  }, [isLoaded, user, role, location.pathname, navigate]);
+
+  useEffect(() => {
+    if (!isLoaded || !user || role !== "user") return;
+    if (showOnboarding && location.pathname !== "/onboarding") {
+      navigate("/onboarding", { replace: true });
+      return;
+    }
+    if (!showOnboarding && location.pathname === "/onboarding") {
+      navigate("/", { replace: true });
+    }
+  }, [isLoaded, user, role, showOnboarding, location.pathname, navigate]);
 
   useEffect(() => {
     if (!isLoaded || !user || role !== "user") return;
