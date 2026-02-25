@@ -1,9 +1,11 @@
 import { Image } from "lucide-react";
+import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../../../components/ui/button";
 import { Card } from "../../../components/ui/card";
 import { Input } from "../../../components/ui/input";
 import { SectionHeading } from "../../../components/ui/section-heading";
+import { MapPickerModal } from "../../../components/modals/MapPickerModal";
 import type { Form } from "../../../types/app";
 
 type UserFormFillPageProps = {
@@ -34,7 +36,36 @@ export const UserFormFillPage = ({
   handleSubmitForm,
   submitMessage,
   onBack,
-}: UserFormFillPageProps) => (
+}: UserFormFillPageProps) => {
+  const [showReview, setShowReview] = useState(false);
+  const [activeMapField, setActiveMapField] = useState<{
+    key: string;
+    label: string;
+    currentValue: string;
+  } | null>(null);
+
+  const readMapLabel = (value: string) => {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed?.address) return String(parsed.address);
+      if (typeof parsed?.lat === "number" && typeof parsed?.lng === "number") {
+        return `${parsed.lat.toFixed(6)}, ${parsed.lng.toFixed(6)}`;
+      }
+    } catch {
+      return value;
+    }
+    return value;
+  };
+
+  const components = activeForm?.components || activeForm?.fields || [];
+
+  const readSubmissionValue = (value: string, type?: string) => {
+    if (!value) return "—";
+    if (type === "map") return readMapLabel(value);
+    return value;
+  };
+
+  return (
   <section className="mx-auto mt-10 max-w-4xl">
     <Card className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -51,19 +82,43 @@ export const UserFormFillPage = ({
       </div>
       {activeForm ? (
         <div className="space-y-6">
-          <div className="flex flex-wrap items-center gap-3">
-            <Button variant="secondary" onClick={handleAutofill}>
-              Autofill
-            </Button>
-          </div>
+          {!showReview ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <Button variant="secondary" onClick={handleAutofill}>
+                Autofill
+              </Button>
+            </div>
+          ) : null}
           <div className="grid gap-4 sm:grid-cols-2">
-            {(activeForm.components || activeForm.fields || []).map((field, index) => {
+            {components.map((field, index) => {
               const fieldKey = field.id || field.tag || `field-${index}`;
               const value = formValues[fieldKey] || "";
               const error = formErrors[fieldKey];
               return (
                 <div key={fieldKey} className="space-y-2">
-                  {field.type === "image" ? (
+                  {showReview ? (
+                    <div className="rounded-2xl border border-sand-200 bg-sand-50 p-4">
+                      <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
+                        {field.label}
+                      </p>
+                      {field.type === "image" && value ? (
+                        <div className="mt-2 space-y-2">
+                          <img
+                            src={value}
+                            alt={field.label}
+                            className="h-28 w-full rounded-xl object-cover"
+                          />
+                          <p className="break-all text-xs text-sand-500">
+                            {getFileNameFromUrl(value) || value}
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-sm text-sand-950">
+                          {readSubmissionValue(value, field.type)}
+                        </p>
+                      )}
+                    </div>
+                  ) : field.type === "image" ? (
                     <>
                       <label className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
                         <Image className="mx-auto h-5 w-5 text-sand-700" />
@@ -105,6 +160,28 @@ export const UserFormFillPage = ({
                         <p className="text-xs text-sand-500">Uploading image...</p>
                       ) : null}
                     </>
+                  ) : field.type === "map" ? (
+                    <div className="rounded-2xl border border-sand-200 bg-sand-50 p-4">
+                      <p className="text-sm font-semibold text-sand-900">
+                        {field.required ? `${field.label} *` : field.label}
+                      </p>
+                      <p className="mt-1 text-xs text-sand-500">
+                        {value ? readMapLabel(value) : "No location selected"}
+                      </p>
+                      <Button
+                        className="mt-3"
+                        variant="secondary"
+                        onClick={() =>
+                          setActiveMapField({
+                            key: fieldKey,
+                            label: field.label,
+                            currentValue: value,
+                          })
+                        }
+                      >
+                        {value ? "Update location" : "Select location"}
+                      </Button>
+                    </div>
                   ) : (
                     <Input
                       type={
@@ -126,13 +203,22 @@ export const UserFormFillPage = ({
                       }
                     />
                   )}
-                  {error ? <p className="text-sm text-sand-500">{error}</p> : null}
+                  {!showReview && error ? <p className="text-sm text-sand-500">{error}</p> : null}
                 </div>
               );
             })}
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={handleSubmitForm}>Submit</Button>
+            {showReview ? (
+              <>
+                <Button variant="ghost" onClick={() => setShowReview(false)}>
+                  Edit
+                </Button>
+                <Button onClick={handleSubmitForm}>Submit</Button>
+              </>
+            ) : (
+              <Button onClick={() => setShowReview(true)}>Review</Button>
+            )}
             {submitMessage ? <p className="text-sm text-sand-500">{submitMessage}</p> : null}
           </div>
         </div>
@@ -142,5 +228,20 @@ export const UserFormFillPage = ({
         </p>
       )}
     </Card>
+    {activeMapField ? (
+      <MapPickerModal
+        title={activeMapField.label}
+        initialValue={activeMapField.currentValue}
+        onClose={() => setActiveMapField(null)}
+        onSelect={(nextValue) => {
+          setFormValues((prev) => ({
+            ...prev,
+            [activeMapField.key]: nextValue,
+          }));
+          setActiveMapField(null);
+        }}
+      />
+    ) : null}
   </section>
-);
+  );
+};

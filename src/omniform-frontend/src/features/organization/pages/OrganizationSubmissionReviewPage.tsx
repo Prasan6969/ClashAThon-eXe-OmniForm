@@ -40,7 +40,7 @@ export const OrganizationSubmissionReviewPage = ({
             selectedOrgSubmission
               ? typeof selectedOrgSubmission.formId === "string"
                 ? "Submission review"
-                : selectedOrgSubmission.formId.name
+                : selectedOrgSubmission.formId?.name || "Deleted form"
               : "Submission review"
           }
           subtitle="Review form data and finalize a decision."
@@ -52,7 +52,10 @@ export const OrganizationSubmissionReviewPage = ({
       {selectedOrgSubmission ? (
         <div className="space-y-6">
           <div className="flex flex-wrap items-center gap-3">
-            <StatusPill status={selectedOrgSubmission.status} />
+            <StatusPill
+              status={selectedOrgSubmission.status}
+              labelOverrides={{ completed: "accepted" }}
+            />
             <p className="text-sm text-sand-500">
               Submitted {new Date(selectedOrgSubmission.createdAt).toLocaleString()}
             </p>

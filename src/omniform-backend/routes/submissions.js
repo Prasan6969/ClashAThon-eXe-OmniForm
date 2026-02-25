@@ -1,4 +1,5 @@
 const express = require("express");
+const mongoose = require("mongoose");
 const { clerkClient } = require("@clerk/express");
 const Submission = require("../models/Submission");
 const Form = require("../models/Form");
@@ -89,7 +90,13 @@ router.get("/me", requireRole("user"), async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(100);
 
-    return res.json({ data: submissions });
+    const visibleSubmissions = submissions.filter((submission) => {
+      if (!submission.formId) return false;
+      if (typeof submission.formId === "string") return false;
+      return Boolean(submission.formId.name);
+    });
+
+    return res.json({ data: visibleSubmissions });
   } catch (error) {
     return res.status(500).json({ error: "Failed to fetch submissions" });
   }
@@ -153,16 +160,29 @@ router.post("/clear-canceled", requireRole("user"), async (req, res) => {
 router.get("/org", requireRole("organization"), async (req, res) => {
   try {
     const { formId, status, email, page, limit } = req.query;
-    const filter = { organizationId: req.auth.organizationId };
-    const pageNumber = Math.max(Number(page) || 1, 1);
-    const pageSize = Math.min(Math.max(Number(limit) || 20, 1), 100);
-
-    if (formId) {
-      filter.formId = formId;
+    const organizationId = String(req.auth.organizationId || "").trim();
+    if (!isValidObjectId(organizationId)) {
+      return res.status(400).json({ error: "Invalid organization context" });
     }
 
-    if (status && status !== "all") {
-      filter.status = status;
+    const filter = {
+      organizationId: new mongoose.Types.ObjectId(organizationId),
+    };
+    const pageNumber = Math.max(Number(page) || 1, 1);
+    const pageSize = Math.min(Math.max(Number(limit) || 20, 1), 100);
+    const normalizedStatus =
+      String(status || "all").toLowerCase() === "accepted"
+        ? "completed"
+        : String(status || "all").toLowerCase();
+
+    if (formId && isValidObjectId(formId)) {
+      filter.formId = new mongoose.Types.ObjectId(String(formId));
+    }
+
+    if (normalizedStatus && normalizedStatus !== "all") {
+      filter.status = normalizedStatus;
+    } else {
+      filter.status = { $in: ["pending", "completed", "rejected"] };
     }
 
     if (email) {
@@ -175,12 +195,51 @@ router.get("/org", requireRole("organization"), async (req, res) => {
       ];
     }
 
-    const total = await Submission.countDocuments(filter);
-    const submissions = await Submission.find(filter)
-      .populate("formId", "name")
-      .sort({ createdAt: -1 })
-      .skip((pageNumber - 1) * pageSize)
-      .limit(pageSize);
+    const [result] = await Submission.aggregate([
+      { $match: filter },
+      {
+        $lookup: {
+          from: "forms",
+          localField: "formId",
+          foreignField: "_id",
+          as: "formDoc",
+        },
+      },
+      {
+        $unwind: {
+          path: "$formDoc",
+          preserveNullAndEmptyArrays: false,
+        },
+      },
+      {
+        $project: {
+          _id: 1,
+          status: 1,
+          createdAt: 1,
+          userId: 1,
+          userEmail: 1,
+          organizationId: 1,
+          data: 1,
+          reviewNotes: 1,
+          cooldownUntil: 1,
+          reviewedBy: 1,
+          formId: {
+            _id: "$formDoc._id",
+            name: "$formDoc.name",
+          },
+        },
+      },
+      { $sort: { createdAt: -1 } },
+      {
+        $facet: {
+          data: [{ $skip: (pageNumber - 1) * pageSize }, { $limit: pageSize }],
+          total: [{ $count: "count" }],
+        },
+      },
+    ]);
+
+    const submissions = result?.data || [];
+    const total = result?.total?.[0]?.count || 0;
 
     return res.json({
       data: submissions,

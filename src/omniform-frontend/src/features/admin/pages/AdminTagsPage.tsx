@@ -81,6 +81,7 @@ export const AdminTagsPage = ({
               <option value="number">number</option>
               <option value="image">image</option>
               <option value="select">select</option>
+              <option value="map">map</option>
             </Select>
             <Input
               placeholder="Select options (comma separated)"

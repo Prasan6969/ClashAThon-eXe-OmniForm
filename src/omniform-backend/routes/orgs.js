@@ -2,6 +2,7 @@ const express = require("express");
 const Organization = require("../models/Organization");
 const Form = require("../models/Form");
 const { requireRole } = require("../middleware/auth");
+const { isValidObjectId } = require("../utils/validation");
 
 const router = express.Router();
 
@@ -69,8 +70,17 @@ router.get(
   async (req, res) => {
     try {
       const { orgId } = req.params;
-      const query = req.query.query ? req.query.query.trim() : "";
+      const query = typeof req.query.query === "string" ? req.query.query.trim() : "";
       const role = req.auth?.role;
+
+      if (!isValidObjectId(orgId)) {
+        return res.json({ data: [] });
+      }
+
+      if (role === "organization" && String(req.auth?.organizationId || "") !== String(orgId)) {
+        return res.json({ data: [] });
+      }
+
       const filter = {
         organizationId: orgId,
       };
@@ -93,7 +103,11 @@ router.get(
         }
       }
       if (query) {
-        filter.$text = { $search: query };
+        const safeQuery = escapeRegex(query);
+        filter.$or = [
+          { name: { $regex: safeQuery, $options: "i" } },
+          { description: { $regex: safeQuery, $options: "i" } },
+        ];
       }
 
       const forms = await Form.find(filter)

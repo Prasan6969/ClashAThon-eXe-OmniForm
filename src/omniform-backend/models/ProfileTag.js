@@ -6,7 +6,7 @@ const ProfileTagSchema = new mongoose.Schema(
     tag: { type: String, required: true, trim: true, unique: true },
     type: {
       type: String,
-      enum: ["text", "email", "date", "number", "image", "select"],
+      enum: ["text", "email", "date", "number", "image", "select", "map"],
       default: "text",
     },
     options: [{ type: String }],

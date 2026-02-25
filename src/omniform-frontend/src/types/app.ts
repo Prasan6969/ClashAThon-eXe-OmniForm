@@ -59,7 +59,7 @@ export type TagDefinition = {
   _id: string;
   label: string;
   tag: string;
-  type: "text" | "email" | "date" | "number" | "image" | "select";
+  type: "text" | "email" | "date" | "number" | "image" | "select" | "map";
   options?: string[];
 };
 

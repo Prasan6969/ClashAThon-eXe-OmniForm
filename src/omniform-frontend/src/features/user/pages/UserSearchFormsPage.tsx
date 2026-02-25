@@ -21,7 +21,7 @@ export const UserSearchFormsPage = ({
   formLoading,
   orgLoading,
 }: UserSearchFormsPageProps) => (
-  <section className="mx-auto max-w-6xl">
+  <section className="mx-auto mt-10 max-w-6xl">
     <Card className="space-y-6">
       <SectionHeading
         title="Search Forms"

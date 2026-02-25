@@ -26,6 +26,7 @@ type OrganizationDashboardPageProps = {
   orgSubmissionTotalPages: number;
   orgDashboardMessage: string;
   navigateToSubmission: (id: string) => void;
+  onRefresh: () => void;
 };
 
 export const OrganizationDashboardPage = ({
@@ -46,6 +47,7 @@ export const OrganizationDashboardPage = ({
   orgSubmissionTotalPages,
   orgDashboardMessage,
   navigateToSubmission,
+  onRefresh,
 }: OrganizationDashboardPageProps) => (
   <section className="mx-auto mt-10 max-w-6xl">
     <Card className="space-y-6">
@@ -78,7 +80,7 @@ export const OrganizationDashboardPage = ({
           <Badge tone="neutral">{orgMembership?.subscriptionStatus || "unknown"}</Badge>
         </div>
       </Card>
-      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
+      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_1fr_auto_auto]">
         <Select value={orgFormFilter} onChange={(event) => setOrgFormFilter(event.target.value)}>
           <option value="">All forms</option>
           {orgForms.map((form) => (
@@ -98,7 +100,7 @@ export const OrganizationDashboardPage = ({
         <Select value={orgStatusFilter} onChange={(event) => setOrgStatusFilter(event.target.value)}>
           <option value="all">all</option>
           <option value="pending">pending</option>
-          <option value="completed">accepted</option>
+          <option value="accepted">accepted</option>
           <option value="rejected">rejected</option>
         </Select>
         <Button
@@ -112,6 +114,9 @@ export const OrganizationDashboardPage = ({
           }}
         >
           Reset
+        </Button>
+        <Button variant="ghost" onClick={onRefresh}>
+          Refresh
         </Button>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -158,7 +163,10 @@ export const OrganizationDashboardPage = ({
                   Submitted {new Date(submission.createdAt).toLocaleString()}
                 </p>
               </div>
-              <StatusPill status={submission.status} />
+              <StatusPill
+                status={submission.status}
+                labelOverrides={{ completed: "accepted" }}
+              />
             </div>
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <Button variant="secondary" onClick={() => navigateToSubmission(submission._id)}>

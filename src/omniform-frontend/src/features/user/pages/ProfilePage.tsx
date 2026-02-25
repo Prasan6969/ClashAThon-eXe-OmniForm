@@ -1,8 +1,11 @@
 import { Image } from "lucide-react";
+import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import { MapPickerModal } from "../../../components/modals/MapPickerModal";
 import { Button } from "../../../components/ui/button";
 import { Card } from "../../../components/ui/card";
 import { Input } from "../../../components/ui/input";
+import { MapPreview } from "../../../components/ui/map-preview";
 import { SectionHeading } from "../../../components/ui/section-heading";
 import { Select } from "../../../components/ui/select";
 import type { Profile, TagDefinition } from "../../../types/app";
@@ -41,7 +44,27 @@ export const ProfilePage = ({
   uploadingImageTarget,
   handleProfileSave,
   profileMessage,
-}: ProfilePageProps) => (
+}: ProfilePageProps) => {
+  const [activeMapField, setActiveMapField] = useState<{
+    tag: string;
+    label: string;
+    currentValue: string;
+  } | null>(null);
+
+  const readMapLabel = (value: string) => {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed?.address) return String(parsed.address);
+      if (typeof parsed?.lat === "number" && typeof parsed?.lng === "number") {
+        return `${parsed.lat.toFixed(6)}, ${parsed.lng.toFixed(6)}`;
+      }
+    } catch {
+      return value;
+    }
+    return value;
+  };
+
+  return (
   <section className="mx-auto mt-10 max-w-3xl">
     <Card className="space-y-8">
       <SectionHeading
@@ -214,6 +237,31 @@ export const ProfilePage = ({
                   );
                 }
 
+                if (item.type === "map") {
+                  return (
+                    <div key={item._id} className="rounded-2xl border border-sand-200 bg-sand-50 p-4 sm:col-span-2">
+                      <p className="text-xs uppercase tracking-[0.2em] text-sand-500">{item.label}</p>
+                      <p className="mt-1 text-sm text-sand-900">
+                        {value ? readMapLabel(value) : "No location selected"}
+                      </p>
+                      <MapPreview value={value} />
+                      <Button
+                        className="mt-3"
+                        variant="secondary"
+                        onClick={() =>
+                          setActiveMapField({
+                            tag: item.tag,
+                            label: item.label,
+                            currentValue: value,
+                          })
+                        }
+                      >
+                        {value ? "Update location" : "Select location"}
+                      </Button>
+                    </div>
+                  );
+                }
+
                 return (
                   <div key={item._id} className="space-y-1">
                     <p className="text-xs uppercase tracking-[0.2em] text-sand-500">{item.label}</p>
@@ -244,5 +292,17 @@ export const ProfilePage = ({
       </div>
       {profileMessage ? <p className="text-sm text-sand-500">{profileMessage}</p> : null}
     </Card>
+    {activeMapField ? (
+      <MapPickerModal
+        title={activeMapField.label}
+        initialValue={activeMapField.currentValue}
+        onClose={() => setActiveMapField(null)}
+        onSelect={(nextValue) => {
+          setProfileTagFieldValue(activeMapField.tag, nextValue);
+          setActiveMapField(null);
+        }}
+      />
+    ) : null}
   </section>
-);
+  );
+};

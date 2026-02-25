@@ -22,7 +22,7 @@ const slugify = (value) =>
     .replace(/[^a-z0-9\s-]/g, "")
     .replace(/\s+/g, "-");
 
-const TAG_TYPES = ["text", "email", "date", "number", "image", "select"];
+const TAG_TYPES = ["text", "email", "date", "number", "image", "select", "map"];
 
 const normalizeTagPayload = (payload = {}) => {
   const label = sanitizeString(payload.label, 120);

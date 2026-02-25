@@ -4,7 +4,7 @@ import {
   SignInButton,
   SignOutButton,
 } from "@clerk/clerk-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Home, Search, User } from "lucide-react";
 import { Button } from "./components/ui/button";
@@ -60,6 +60,7 @@ import { AdminTagsPage } from "./features/admin/pages/AdminTagsPage";
 import { AdminOrganizationSettingsPage } from "./features/admin/pages/AdminOrganizationSettingsPage";
 import { AdminManageOrganizationsPage } from "./features/admin/pages/AdminManageOrganizationsPage";
 import { AdminManageFormsPage } from "./features/admin/pages/AdminManageFormsPage";
+import { MapPreview } from "./components/ui/map-preview";
 export default function App() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -419,7 +420,9 @@ export default function App() {
     submission: UserSubmissionDetail | OrgSubmissionDetail,
     key: string
   ) => {
-    if (!submission || typeof submission.formId === "string") return "";
+    if (!submission || typeof submission.formId === "string" || !submission.formId) {
+      return "";
+    }
     const formFields = (
       (submission.formId as {
         fields?: FormField[];
@@ -449,8 +452,31 @@ export default function App() {
   ) => {
     const value = String(rawValue || "").trim();
     const fieldType = getSubmissionFieldType(submission, key);
+    const isMapField = fieldType === "map";
     const isImageField =
       fieldType === "image" || (isImageUrl(value) && /(photo|image)/i.test(key));
+
+    if (isMapField) {
+      const mapLabel = (() => {
+        try {
+          const parsed = JSON.parse(value);
+          if (parsed?.address) return String(parsed.address);
+          if (typeof parsed?.lat === "number" && typeof parsed?.lng === "number") {
+            return `${parsed.lat.toFixed(6)}, ${parsed.lng.toFixed(6)}`;
+          }
+        } catch {
+          return value || "No location submitted.";
+        }
+        return value || "No location submitted.";
+      })();
+
+      return (
+        <div className="mt-1">
+          <p className="text-sm text-sand-950">{mapLabel}</p>
+          <MapPreview value={value} />
+        </div>
+      );
+    }
 
     if (isImageField && isImageUrl(value)) {
       return (
@@ -744,6 +770,7 @@ export default function App() {
     if (value === "number") return "number";
     if (value === "image") return "image";
     if (value === "select") return "select";
+    if (value === "map") return "map";
     return "text";
   };
 
@@ -967,6 +994,46 @@ export default function App() {
       );
     }
   };
+
+  const handleOrgDashboardRefresh = useCallback(async () => {
+    if (!isLoaded || !user || role !== "organization") return;
+
+    const organizationId =
+      resolvedOrganizationId ||
+      (user.publicMetadata?.organizationId as string | undefined) ||
+      "";
+    if (!organizationId) return;
+
+    try {
+      const formPayload = await authedFetch(
+        `/api/orgs/${organizationId}/forms?query=`
+      );
+      setOrgForms(formPayload.data || []);
+    } catch {
+      // keep current values if refresh fails
+    }
+
+    try {
+      const submissionPayload = await authedFetch(
+        `/api/submissions/org?status=${orgStatusFilter}&formId=${orgFormFilter}&page=${orgSubmissionPage}&limit=20&email=${encodeURIComponent(
+          orgSubmissionEmailQuery
+        )}`
+      );
+      setOrgSubmissions(submissionPayload.data || []);
+      setOrgSubmissionTotalPages(submissionPayload.totalPages || 1);
+    } catch {
+      // keep current values if refresh fails
+    }
+  }, [
+    isLoaded,
+    user,
+    role,
+    resolvedOrganizationId,
+    orgStatusFilter,
+    orgFormFilter,
+    orgSubmissionPage,
+    orgSubmissionEmailQuery,
+  ]);
 
   const fetchOrgSubmissionDetail = async (submissionId: string) => {
     try {
@@ -1345,6 +1412,11 @@ export default function App() {
       const data = mapSubmissionData(activeForm, formValues);
       const candidates = collectUnsavedCandidates(activeForm, formValues, profileDraft);
 
+      if (!candidates.length) {
+        await completeSubmission(data);
+        return;
+      }
+
       setPendingSubmissionData(data);
       setSaveCandidates(candidates);
       setSelectedSaveCandidateKeys(
@@ -1544,11 +1616,7 @@ export default function App() {
   useEffect(() => {
     if (!isLoaded || !user) return;
     if (role === "user") {
-      if (location.pathname === "/profile") {
-        setView("profile");
-      } else {
-        setView("user");
-      }
+      setView("user");
     }
   }, [isLoaded, user, role, location.pathname]);
 
@@ -1751,6 +1819,28 @@ export default function App() {
 
   useEffect(() => {
     if (!isLoaded || !user || role !== "organization") return;
+    if (location.pathname !== "/org") return;
+
+    const intervalId = window.setInterval(() => {
+      handleOrgDashboardRefresh();
+    }, 300000);
+
+    return () => window.clearInterval(intervalId);
+  }, [
+    isLoaded,
+    user,
+    role,
+    location.pathname,
+    orgStatusFilter,
+    orgFormFilter,
+    orgSubmissionPage,
+    orgSubmissionEmailQuery,
+    resolvedOrganizationId,
+    handleOrgDashboardRefresh,
+  ]);
+
+  useEffect(() => {
+    if (!isLoaded || !user || role !== "organization") return;
     const currentId = location.pathname.startsWith("/org/submissions/")
       ? location.pathname.split("/org/submissions/")[1]
       : "";
@@ -1884,6 +1974,7 @@ export default function App() {
                     handleCancelSubmission={handleCancelSubmission}
                     profileDraft={profileDraft}
                     navigateToProfile={() => navigate("/profile")}
+                    navigateToSearch={() => navigate("/search")}
                   />
                 ) : null
               }
@@ -2181,6 +2272,7 @@ export default function App() {
                     orgSubmissionTotalPages={orgSubmissionTotalPages}
                     orgDashboardMessage={orgDashboardMessage}
                     navigateToSubmission={(id) => navigate(`/org/submissions/${id}`)}
+                    onRefresh={handleOrgDashboardRefresh}
                   />
                 ) : null
               }
@@ -2247,14 +2339,24 @@ export default function App() {
           <CustomComponentModal
             customComponent={customComponent}
             setCustomComponent={setCustomComponent}
+            adminTags={adminTags}
             onAddComponent={async () => {
-              if (!customComponent.label.trim()) return;
-              const cleanLabel = customComponent.label.trim();
-              const nextTag = toProfileTag(cleanLabel);
-              const normalizedType = coerceTagType(customComponent.type.trim() || "text");
-              const normalizedOptions = splitComponentOptions(customComponent.options);
+              const selectedTag = adminTags.find(
+                (item) => item.tag === customComponent.tag.trim()
+              );
+              const cleanLabel =
+                customComponent.label.trim() || selectedTag?.label || "";
+              if (!cleanLabel) return;
 
-              if (nextTag) {
+              const nextTag = selectedTag?.tag || toProfileTag(cleanLabel);
+              const normalizedType = selectedTag
+                ? selectedTag.type
+                : coerceTagType(customComponent.type.trim() || "text");
+              const normalizedOptions = selectedTag
+                ? selectedTag.options || []
+                : splitComponentOptions(customComponent.options);
+
+              if (nextTag && !selectedTag) {
                 try {
                   await upsertSystemTag({
                     label: cleanLabel,

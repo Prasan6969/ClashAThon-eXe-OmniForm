@@ -53,6 +53,7 @@ const sanitizeFormComponents = (components) => {
     "number",
     "select",
     "image",
+    "map",
   ]);
 
   const sanitized = components.map((component, index) => {

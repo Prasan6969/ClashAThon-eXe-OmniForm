@@ -296,6 +296,8 @@ export const AdminBuilderPage = ({
                     <p className="text-xs text-sand-500">Email input</p>
                   ) : component.type === "image" ? (
                     <p className="text-xs text-sand-500">Image upload</p>
+                  ) : component.type === "map" ? (
+                    <p className="text-xs text-sand-500">Map location picker</p>
                   ) : (
                     <p className="text-xs text-sand-500">Text input</p>
                   )}
@@ -342,6 +344,7 @@ export const AdminBuilderPage = ({
                     <option value="number">number</option>
                     <option value="select">select</option>
                     <option value="image">image</option>
+                    <option value="map">map</option>
                   </Select>
                   <Input
                     placeholder="Options (comma)"

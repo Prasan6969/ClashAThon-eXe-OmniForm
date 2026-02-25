@@ -30,7 +30,7 @@ export const UserSubmissionDetailPage = ({
             selectedUserSubmission
               ? typeof selectedUserSubmission.formId === "string"
                 ? "Submission details"
-                : selectedUserSubmission.formId.name
+                : selectedUserSubmission.formId?.name || "Deleted form"
               : "Submission details"
           }
           subtitle="Review what you submitted and track status."
@@ -42,7 +42,10 @@ export const UserSubmissionDetailPage = ({
       {selectedUserSubmission ? (
         <div className="space-y-6">
           <div className="flex flex-wrap items-center gap-3">
-            <StatusPill status={selectedUserSubmission.status} />
+            <StatusPill
+              status={selectedUserSubmission.status}
+              labelOverrides={{ completed: "approved" }}
+            />
             <p className="text-sm text-sand-500">
               Submitted {new Date(selectedUserSubmission.createdAt).toLocaleString()}
             </p>

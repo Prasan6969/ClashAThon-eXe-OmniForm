@@ -34,7 +34,7 @@ export const UserDashboardPage = ({
   profileDraft,
   navigateToProfile,
 }: UserDashboardPageProps) => (
-  <section className="mx-auto grid max-w-6xl items-stretch gap-6 lg:grid-cols-2">
+  <section className="mx-auto mt-10 grid max-w-6xl items-stretch gap-6 lg:grid-cols-2">
     <Card className="flex h-[calc(100vh-16rem)] flex-col space-y-6">
       <SectionHeading
         title="Find your organization"
@@ -114,7 +114,10 @@ export const UserDashboardPage = ({
                   </p>
                 ) : null}
               </div>
-              <StatusPill status={submission.status} />
+              <StatusPill
+                status={submission.status}
+                labelOverrides={{ completed: "approved" }}
+              />
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <Button
