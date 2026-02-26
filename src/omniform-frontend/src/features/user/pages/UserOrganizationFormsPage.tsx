@@ -36,7 +36,7 @@ export const UserOrganizationFormsPage = ({
           subtitle="Browse templates and autofill instantly."
         />
         <Button variant="ghost" onClick={onBack}>
-          Back to dashboard
+          Back to organizations
         </Button>
       </div>
       <div className="flex flex-col gap-3 sm:flex-row">

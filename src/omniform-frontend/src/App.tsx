@@ -188,6 +188,10 @@ export default function App() {
   const [autofillUncoveredFields, setAutofillUncoveredFields] = useState<
     Record<string, boolean>
   >({});
+  const [autofillAnimatedFields, setAutofillAnimatedFields] = useState<
+    Record<string, boolean>
+  >({});
+  const [isAutofilling, setIsAutofilling] = useState(false);
   const [componentSearch, setComponentSearch] = useState("");
   const [showSavePrompt, setShowSavePrompt] = useState(false);
   const [showCooldownPrompt, setShowCooldownPrompt] = useState(false);
@@ -297,37 +301,23 @@ export default function App() {
     [defaultBuilderComponents, savedCustomComponents]
   );
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const cached = window.localStorage.getItem("omniform:saved-builder-components");
-      if (!cached) return;
-      const parsed = JSON.parse(cached);
-      if (!Array.isArray(parsed)) return;
-      const sanitized = parsed
-        .filter((item) => item && typeof item === "object")
-        .map((item) => ({
-          id: String(item.id || `custom-template-${Date.now()}`),
-          type: String(item.type || "text"),
-          label: String(item.label || "Custom field"),
-          tag: String(item.tag || toProfileTag(String(item.label || "customField"))),
-          iconName: String(item.iconName || "type"),
-          options: String(item.options || ""),
+  const mapReusableComponents = (payload: unknown): BuilderPaletteComponent[] => {
+    if (!Array.isArray(payload)) return [];
+    return payload
+      .filter((item) => item && typeof item === "object")
+      .map((item) => {
+        const source = item as Record<string, unknown>;
+        return {
+          id: String(source._id || source.id || `custom-template-${Date.now()}`),
+          type: String(source.type || "text"),
+          label: String(source.label || "Custom field"),
+          tag: String(source.tag || toProfileTag(String(source.label || "customField"))),
+          iconName: String(source.iconName || "type"),
+          options: String(source.options || ""),
           removable: true,
-        }));
-      setSavedCustomComponents(sanitized);
-    } catch (error) {
-      setSavedCustomComponents([]);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(
-      "omniform:saved-builder-components",
-      JSON.stringify(savedCustomComponents)
-    );
-  }, [savedCustomComponents]);
+        };
+      });
+  };
 
   const adminFetch = async (path: string, options: RequestInit) => {
     const token = await getToken();
@@ -1597,6 +1587,7 @@ export default function App() {
       setFormValues(initialValues);
       setFormErrors({});
       setAutofillUncoveredFields({});
+      setAutofillAnimatedFields({});
       setSubmitMessage("");
       navigate(`/forms/${form._id}`);
     } catch (error) {
@@ -1608,20 +1599,42 @@ export default function App() {
     }
   };
 
-  const handleAutofill = () => {
-    if (!activeForm) return;
-    const autofilled = buildAutofillPayload(activeForm, profileDraft);
-    const components = (activeForm.components || activeForm.fields || []) as FormField[];
-    const uncovered = components.reduce<Record<string, boolean>>((acc, field, index) => {
-      const fieldKey = field.id || field.tag || `field-${index}`;
-      if (!String(autofilled[fieldKey] || "").trim()) {
-        acc[fieldKey] = true;
-      }
-      return acc;
-    }, {});
-    setFormValues((prev) => ({ ...prev, ...autofilled }));
-    setFormErrors({});
-    setAutofillUncoveredFields(uncovered);
+  const handleAutofill = async () => {
+    if (!activeForm || isAutofilling) return;
+
+    setIsAutofilling(true);
+    try {
+      const autofilled = buildAutofillPayload(activeForm, profileDraft);
+      const components = (activeForm.components || activeForm.fields || []) as FormField[];
+      const uncovered = components.reduce<Record<string, boolean>>((acc, field, index) => {
+        const fieldKey = field.id || field.tag || `field-${index}`;
+        if (!String(autofilled[fieldKey] || "").trim()) {
+          acc[fieldKey] = true;
+        }
+        return acc;
+      }, {});
+
+      const animatedFilled = components.reduce<Record<string, boolean>>((acc, field, index) => {
+        const fieldKey = field.id || field.tag || `field-${index}`;
+        if (String(autofilled[fieldKey] || "").trim()) {
+          acc[fieldKey] = true;
+        }
+        return acc;
+      }, {});
+
+      setFormValues((prev) => ({ ...prev, ...autofilled }));
+      setFormErrors({});
+      setAutofillUncoveredFields(uncovered);
+      setAutofillAnimatedFields(animatedFilled);
+
+      window.setTimeout(() => {
+        setAutofillAnimatedFields({});
+      }, 900);
+    } finally {
+      window.setTimeout(() => {
+        setIsAutofilling(false);
+      }, 220);
+    }
   };
 
   const completeSubmission = async (
@@ -1974,15 +1987,18 @@ export default function App() {
     if (!isLoaded || !user || role !== "admin") return;
     const loadAdminOrgs = async () => {
       try {
-        const [orgPayload, tagPayload] = await Promise.all([
+        const [orgPayload, tagPayload, reusablePayload] = await Promise.all([
           adminFetch("/api/admin/orgs", { method: "GET" }),
           adminFetch("/api/admin/tags", { method: "GET" }),
+          adminFetch("/api/admin/reusable-components", { method: "GET" }),
         ]);
         setAdminOrgs(orgPayload.data || []);
         setAdminTags(normalizeTagDefinitions((tagPayload.data || []) as TagDefinition[]));
+        setSavedCustomComponents(mapReusableComponents(reusablePayload.data || []));
       } catch (error) {
         setAdminOrgs([]);
         setAdminTags([]);
+        setSavedCustomComponents([]);
       }
     };
 
@@ -2394,11 +2410,13 @@ export default function App() {
                     setFormValues={setFormValues}
                     formErrors={formErrors}
                     autofillUncoveredFields={autofillUncoveredFields}
+                    autofillAnimatedFields={autofillAnimatedFields}
                     formImageFileNames={formImageFileNames}
                     getFileNameFromUrl={getFileNameFromUrl}
                     handleFormImageUpload={handleFormImageUpload}
                     uploadingImageTarget={uploadingImageTarget}
                     handleAutofill={handleAutofill}
+                    isAutofilling={isAutofilling}
                     handleSubmitForm={handleSubmitForm}
                     submitMessage={submitMessage}
                     onBack={() => navigate("/")}
@@ -2418,7 +2436,7 @@ export default function App() {
                     formLoading={formLoading}
                     openForm={openForm}
                     profileDraft={profileDraft}
-                    onBack={() => navigate("/")}
+                    onBack={() => navigate("/search")}
                     onGoProfile={() => navigate("/profile")}
                   />
                 ) : null
@@ -2742,29 +2760,48 @@ export default function App() {
           <SaveReusableComponentModal
             componentLabel={pendingReusableComponent.label}
             onSave={async () => {
-              try {
-                setFormMessage("");
-                if (pendingReusableComponent.tag) {
-                  await upsertSystemTag({
-                    label: pendingReusableComponent.label,
-                    tag: pendingReusableComponent.tag,
-                    type: coerceTagType(pendingReusableComponent.type),
-                    options: splitComponentOptions(pendingReusableComponent.options),
+              await runWithActionLock("save-reusable-component", async () => {
+                try {
+                  setFormMessage("");
+                  if (pendingReusableComponent.tag) {
+                    await upsertSystemTag({
+                      label: pendingReusableComponent.label,
+                      tag: pendingReusableComponent.tag,
+                      type: coerceTagType(pendingReusableComponent.type),
+                      options: splitComponentOptions(pendingReusableComponent.options),
+                    });
+                  }
+
+                  const payload = await adminFetch("/api/admin/reusable-components", {
+                    method: "POST",
+                    body: JSON.stringify({
+                      type: coerceTagType(pendingReusableComponent.type),
+                      label: pendingReusableComponent.label,
+                      tag: pendingReusableComponent.tag,
+                      iconName: pendingReusableComponent.iconName,
+                      options: pendingReusableComponent.options,
+                    }),
                   });
+
+                  const mapped = mapReusableComponents([payload.data]);
+                  if (mapped[0]) {
+                    setSavedCustomComponents((prev) => {
+                      if (prev.some((item) => item.id === mapped[0].id)) return prev;
+                      return [...prev, mapped[0]].sort((a, b) =>
+                        a.label.localeCompare(b.label)
+                      );
+                    });
+                  }
+                } catch (error) {
+                  setFormMessage(
+                    error instanceof Error
+                      ? error.message
+                      : "Failed to save reusable component."
+                  );
+                  return;
                 }
-                setSavedCustomComponents((prev) => [
-                  ...prev,
-                  pendingReusableComponent,
-                ]);
-              } catch (error) {
-                setFormMessage(
-                  error instanceof Error
-                    ? error.message
-                    : "Failed to save reusable component."
-                );
-                return;
-              }
-              setPendingReusableComponent(null);
+                setPendingReusableComponent(null);
+              });
             }}
             onSkip={() => setPendingReusableComponent(null)}
           />
@@ -2781,9 +2818,23 @@ export default function App() {
             }
             onDelete={() => {
               if (componentContextMenu.target === "palette") {
-                setSavedCustomComponents((prev) =>
-                  prev.filter((item) => item.id !== componentContextMenu.componentId)
-                );
+                void runWithActionLock("delete-reusable-component", async () => {
+                  try {
+                    await adminFetch(
+                      `/api/admin/reusable-components/${componentContextMenu.componentId}`,
+                      { method: "DELETE" }
+                    );
+                    setSavedCustomComponents((prev) =>
+                      prev.filter((item) => item.id !== componentContextMenu.componentId)
+                    );
+                  } catch (error) {
+                    setFormMessage(
+                      error instanceof Error
+                        ? error.message
+                        : "Failed to delete reusable component."
+                    );
+                  }
+                });
               } else {
                 setFormComponents((prev) =>
                   prev.filter((item) => item.id !== componentContextMenu.componentId)

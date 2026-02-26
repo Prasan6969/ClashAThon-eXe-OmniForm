@@ -16,6 +16,7 @@ type UserFormFillPageProps = {
   setFormValues: Dispatch<SetStateAction<Record<string, string>>>;
   formErrors: Record<string, string>;
   autofillUncoveredFields: Record<string, boolean>;
+  autofillAnimatedFields: Record<string, boolean>;
   formImageFileNames: Record<string, string>;
   getFileNameFromUrl: (url?: string) => string;
   handleFormImageUpload: (
@@ -24,7 +25,8 @@ type UserFormFillPageProps = {
     options?: string[]
   ) => Promise<void>;
   uploadingImageTarget: string;
-  handleAutofill: () => void;
+  handleAutofill: () => Promise<void>;
+  isAutofilling: boolean;
   handleSubmitForm: () => Promise<void>;
   submitMessage: string;
   onBack: () => void;
@@ -36,11 +38,13 @@ export const UserFormFillPage = ({
   setFormValues,
   formErrors,
   autofillUncoveredFields,
+  autofillAnimatedFields,
   formImageFileNames,
   getFileNameFromUrl,
   handleFormImageUpload,
   uploadingImageTarget,
   handleAutofill,
+  isAutofilling,
   handleSubmitForm,
   submitMessage,
   onBack,
@@ -100,8 +104,8 @@ export const UserFormFillPage = ({
         <div className="space-y-6">
           {!showReview ? (
             <div className="flex flex-wrap items-center gap-3">
-              <Button variant="secondary" onClick={handleAutofill}>
-                Autofill
+              <Button variant="secondary" onClick={handleAutofill} disabled={isAutofilling}>
+                {isAutofilling ? "Autofilling..." : "Autofill"}
               </Button>
               {hasAutofillGaps ? (
                 <p className="text-xs text-sand-500">
@@ -117,6 +121,8 @@ export const UserFormFillPage = ({
               const error = formErrors[fieldKey];
               const fieldLabel = field.required ? `${field.label} *` : field.label;
               const shouldHighlight = !showReview && Boolean(autofillUncoveredFields[fieldKey]);
+              const shouldAnimate = !showReview && Boolean(autofillAnimatedFields[fieldKey]);
+              const autofillAnimationClass = shouldAnimate ? "autofill-text-magic" : "";
               return (
                 <div
                   key={fieldKey}
@@ -153,7 +159,7 @@ export const UserFormFillPage = ({
                       <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
                         {fieldLabel}
                       </p>
-                      <label className="block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center">
+                      <label className={`block w-full cursor-pointer rounded-2xl border border-dashed border-sand-300 bg-sand-50 p-5 text-center ${autofillAnimationClass}`}>
                         <Image className="mx-auto h-5 w-5 text-sand-700" />
                         <p className="mt-1 text-xs text-sand-500">
                           {value ? "Update image" : "Browse files"}
@@ -199,7 +205,7 @@ export const UserFormFillPage = ({
                       <p className="text-xs uppercase tracking-[0.2em] text-sand-500">
                         {fieldLabel}
                       </p>
-                      <div className="rounded-2xl border border-sand-200 bg-sand-50 p-4">
+                      <div className={`rounded-2xl border border-sand-200 bg-sand-50 p-4 ${autofillAnimationClass}`}>
                         <p className="text-xs text-sand-500">
                           {value ? readMapLabel(value) : "No location selected"}
                         </p>
@@ -224,6 +230,7 @@ export const UserFormFillPage = ({
                         {fieldLabel}
                       </p>
                       <Select
+                        className={autofillAnimationClass}
                         value={value}
                         onChange={(event) =>
                           setFormValues((prev) => ({
@@ -246,6 +253,7 @@ export const UserFormFillPage = ({
                         {fieldLabel}
                       </p>
                       <ComboBox
+                        className={autofillAnimationClass}
                         options={(field.options || []).map((option) => ({
                           value: option,
                           label: option,
@@ -280,7 +288,7 @@ export const UserFormFillPage = ({
                                 }))
                               }
                             />
-                            <span>{option}</span>
+                            <span className={value === option ? autofillAnimationClass : ""}>{option}</span>
                           </label>
                         ))}
                       </div>
@@ -312,7 +320,7 @@ export const UserFormFillPage = ({
                                   }));
                                 }}
                               />
-                              <span>{option}</span>
+                              <span className={selectedValues.has(option) ? autofillAnimationClass : ""}>{option}</span>
                             </label>
                           );
                         })}
@@ -324,6 +332,7 @@ export const UserFormFillPage = ({
                         {fieldLabel}
                       </p>
                       <Input
+                        className={autofillAnimationClass}
                         type={
                           field.type === "number"
                             ? "number"

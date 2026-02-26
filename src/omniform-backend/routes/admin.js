@@ -4,6 +4,7 @@ const Organization = require("../models/Organization");
 const Form = require("../models/Form");
 const Submission = require("../models/Submission");
 const ProfileTag = require("../models/ProfileTag");
+const ReusableComponent = require("../models/ReusableComponent");
 const { requireRole } = require("../middleware/auth");
 const {
   isValidObjectId,
@@ -72,6 +73,37 @@ const normalizeTagPayload = (payload = {}) => {
       tag,
       type,
       options: TAG_TYPES_WITH_OPTIONS.has(type) ? options : [],
+    },
+  };
+};
+
+const normalizeReusableComponentPayload = (payload = {}) => {
+  const label = sanitizeString(payload.label, 120);
+  const tag = sanitizeKey(payload.tag || label, 80);
+  const type = sanitizeString(payload.type || "text", 40).toLowerCase();
+  const iconName = sanitizeString(payload.iconName || "type", 80);
+  const options = sanitizeString(payload.options || "", 1500);
+
+  if (!label) {
+    return { ok: false, error: "Component label is required" };
+  }
+
+  if (!tag) {
+    return { ok: false, error: "Component tag is required" };
+  }
+
+  if (!TAG_TYPES.includes(type)) {
+    return { ok: false, error: "Invalid component type" };
+  }
+
+  return {
+    ok: true,
+    value: {
+      label,
+      tag,
+      type,
+      iconName: iconName || "type",
+      options,
     },
   };
 };
@@ -437,6 +469,71 @@ router.get("/tags", requireRole("admin"), async (req, res) => {
     return res.status(500).json({ error: "Failed to fetch tags" });
   }
 });
+
+router.get("/reusable-components", requireRole("admin"), async (req, res) => {
+  try {
+    const components = await ReusableComponent.find({ isActive: true })
+      .select("type label tag iconName options")
+      .sort({ label: 1 })
+      .limit(1000);
+
+    return res.json({ data: components });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to fetch reusable components" });
+  }
+});
+
+router.post("/reusable-components", requireRole("admin"), async (req, res) => {
+  try {
+    const normalized = normalizeReusableComponentPayload(req.body);
+    if (!normalized.ok) {
+      return res.status(400).json({ error: normalized.error });
+    }
+
+    const existing = await ReusableComponent.findOne({
+      isActive: true,
+      tag: normalized.value.tag,
+      type: normalized.value.type,
+      label: normalized.value.label,
+    }).select("_id type label tag iconName options");
+
+    if (existing) {
+      return res.json({ data: existing });
+    }
+
+    const created = await ReusableComponent.create({
+      ...normalized.value,
+      createdBy: req.auth.userId,
+      isActive: true,
+    });
+
+    return res.status(201).json({ data: created });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to create reusable component" });
+  }
+});
+
+router.delete(
+  "/reusable-components/:componentId",
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const { componentId } = req.params;
+      if (!isValidObjectId(componentId)) {
+        return res.status(400).json({ error: "Invalid component ID" });
+      }
+
+      const deleted = await ReusableComponent.findByIdAndDelete(componentId);
+      if (!deleted) {
+        return res.status(404).json({ error: "Reusable component not found" });
+      }
+
+      return res.json({ data: { _id: componentId } });
+    } catch (error) {
+      return res.status(500).json({ error: "Failed to delete reusable component" });
+    }
+  }
+);
 
 router.post("/tags", requireRole("admin"), async (req, res) => {
   try {

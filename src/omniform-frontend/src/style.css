@@ -76,4 +76,32 @@
   .font-secondary {
     font-family: var(--font-secondary);
   }
+
+  @keyframes autofillTextMagic {
+    0% {
+      opacity: 0.65;
+      filter: blur(1px);
+      letter-spacing: 0.012em;
+      transform: translateY(1px);
+    }
+    55% {
+      opacity: 1;
+      filter: blur(0.1px);
+      letter-spacing: 0.004em;
+      transform: translateY(0);
+    }
+    100% {
+      opacity: 1;
+      filter: blur(0);
+      letter-spacing: 0;
+      transform: translateY(0);
+    }
+  }
+
+  .autofill-text-magic,
+  .autofill-text-magic input,
+  .autofill-text-magic select {
+    animation: autofillTextMagic 500ms ease-out;
+    will-change: filter, opacity, transform;
+  }
 }
