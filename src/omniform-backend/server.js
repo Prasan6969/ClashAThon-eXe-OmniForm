@@ -15,26 +15,32 @@ connectDB();
 
 const app = express();
 
+const normalizeOrigin = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/\/+$/, "");
+
 const allowedOrigins = [
   ...(process.env.CORS_ORIGINS || "")
     .split(",")
-    .map((origin) => origin.trim())
+    .map((origin) => normalizeOrigin(origin))
     .filter(Boolean),
-  process.env.FRONTEND_URL,
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
+  normalizeOrigin(process.env.FRONTEND_URL),
+  normalizeOrigin("http://localhost:5173"),
+  normalizeOrigin("http://127.0.0.1:5173"),
 ].filter(Boolean);
 
 app.use(
   cors({
     origin(origin, callback) {
       if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) {
+      if (allowedOrigins.includes(normalizeOrigin(origin))) {
         return callback(null, true);
       }
-      return callback(new Error("CORS origin not allowed"));
+      return callback(null, false);
     },
     credentials: true,
+    optionsSuccessStatus: 204,
   })
 );
 app.use(express.json());
