@@ -6,13 +6,15 @@ export const LandingPage = () => (
   <div className="min-h-screen bg-white">
     <header className="px-6 py-6 sm:px-10">
       <nav className="mx-auto flex max-w-6xl items-center justify-between">
-        <div className="space-y-1">
-          <p className="text-sm uppercase tracking-[0.2em] text-sand-500">
+        <div className="flex items-center gap-3">
+          <img
+            src="/logo.svg"
+            alt="Omniform logo"
+            className="h-12 w-12 rounded-xl object-cover"
+          />
+          <p className="text-base font-semibold uppercase tracking-[0.2em] text-sand-950 sm:text-lg">
             Omniform
           </p>
-          <h1 className="text-2xl font-semibold text-sand-950 sm:text-3xl">
-            End the data tax
-          </h1>
         </div>
         <div className="flex items-center gap-3">
           <SignInButton>

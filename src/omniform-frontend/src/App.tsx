@@ -2212,13 +2212,15 @@ export default function App() {
       {!showLanding ? (
         <header className="sticky top-0 z-50 border-b border-sand-200/70 bg-white/95 px-4 py-4 backdrop-blur sm:px-10 sm:py-6">
           <nav className="mx-auto flex max-w-6xl items-center justify-between">
-            <div className="space-y-1">
-              <p className="text-sm uppercase tracking-[0.2em] text-sand-500">
+            <div className="flex items-center gap-3">
+              <img
+                src="/logo.svg"
+                alt="Omniform logo"
+                className="h-10 w-10 rounded-xl object-cover"
+              />
+              <p className="text-base font-semibold uppercase tracking-[0.2em] text-sand-950 sm:text-lg">
                 Omniform
               </p>
-              <h1 className="text-2xl font-semibold text-sand-950 sm:text-3xl">
-                Identity Forms, One Tap
-              </h1>
             </div>
             <div className="flex flex-wrap items-center gap-3">
               {showOnboarding ? null : (
